@@ -1,0 +1,95 @@
+---
+title: JavaScript Hoisting
+description: Understand hoisting in JavaScript for variables, functions, and classes with examples for interviews
+order: 6
+---
+
+To understand **Hoisting** as an SDE 2, you must discard the common metaphor that "code is moved to the top of the file." The JavaScript engine does not move your source code.
+
+Instead, Hoisting is a side-effect of how the **V8 Engine** parses code and manages the **Execution Context**.
+
+---
+
+### 1. The Under-the-Hood Mechanic: The Two-Phase Pass
+When the engine runs a script (or a function), it processes the code in two distinct passes:
+
+#### Phase 1: Creation (Compile) Phase
+The engine scans the code for variable and function declarations. It sets up the **Lexical Environment** and allocates memory for them. This is where "Hoisting" actually happens.
+- **Functions:** The entire function body is stored in memory.
+- **`var`:** The engine registers the variable and initializes it with `undefined`.
+- **`let` and `const`:** The engine registers the variable but **does not initialize it**. It is marked as "uninitialized."
+
+#### Phase 2: Execution Phase
+The engine runs the code line-by-line. If you try to access a variable here, it looks at the memory allocated in Phase 1.
+
+---
+
+### 2. Code Example: Different Hoisting Behaviors
+
+```javascript
+// 1. Function Hoisting
+greet(); // "Hello!" - Works because the whole function is in memory.
+
+function greet() {
+    console.log("Hello!");
+}
+
+// 2. var Hoisting
+console.log(name); // undefined - 'var' was initialized to undefined in Phase 1.
+var name = "SDE 2";
+
+// 3. let/const Hoisting (The TDZ)
+console.log(job); // ReferenceError: Cannot access 'job' before initialization
+let job = "Engineer";
+```
+
+---
+
+### 3. The Temporal Dead Zone (TDZ)
+As an SDE 2, you should be familiar with the **TDZ**. 
+When a `let` or `const` variable is "hoisted," it is placed in the Lexical Environment, but it is in a "dead" state. Any attempt to access it before the line where it is defined results in a `ReferenceError`.
+
+**Why does TDZ exist?**
+It was introduced in ES6 to encourage better coding practices (preventing usage of variables before definition) and to make `const` truly constant (you can't have a `const` start as `undefined` and then change to a value).
+
+---
+
+### 4. SDE 2 Deep Dive: Function vs. Variable Priority
+What happens when a variable and a function have the same name? 
+**Functions are hoisted first.**
+
+```javascript
+console.log(typeof myThing); // "function"
+
+var myThing = "I am a string";
+
+function myThing() {
+    return "I am a function";
+}
+
+console.log(typeof myThing); // "string" (After assignment in Execution Phase)
+```
+**Mechanism:** During the Creation Phase, the engine first puts the function `myThing` into the Environment Record. When it sees `var myThing`, it sees the name is already taken and, since `var` initialization is `undefined`, it doesn't overwrite the function pointer. The overwrite only happens during the **Execution Phase** when the assignment `=` occurs.
+
+---
+
+### 5. SDE 2 Insight: Classes and Hoisting
+Classes in JavaScript are actually functions under the hood, but they behave like `let/const` regarding hoisting.
+
+```javascript
+const car = new Tesla(); // ReferenceError
+
+class Tesla {}
+```
+Classes are **not** hoisted in the same way function declarations are. They are placed in the TDZ, requiring you to define a class before you instantiate it. This ensures that the constructor logic and inheritance chain are fully resolved before use.
+
+---
+
+### 6. Performance Impact
+As an SDE 2, you might wonder if hoisting impacts performance.
+- **Memory Allocation:** Extensive use of `var` and `function` declarations at the top level increases the memory footprint of the Global Execution Context immediately.
+- **V8 Optimization:** Modern engines (V8) prefer `let` and `const` because the TDZ allows the compiler to make stronger assumptions about the state of the variable, leading to better optimization (Inline Caching) during the "Hot" path of execution.
+
+### Summary
+*   **Junior view:** Variables move to the top.
+*   **SDE 2 view:** Hoisting is a result of the **Creation Phase** of the Execution Context. It describes the state (Initialized vs. Uninitialized) of memory in the **Lexical Environment** before the Execution Phase begins.

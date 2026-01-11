@@ -1,0 +1,154 @@
+---
+title: Data Table with Sorting, Filtering, and Pagination
+description: Learn how to build a fully functional data table in React using a JSON dataset with sorting, filtering, and pagination
+order: 49
+---
+
+To an SDE 2, a Data Table is a **Data Transformation Pipeline**. The core logic follows a strict sequence: **Filter ➔ Sort ➔ Paginate**. 
+
+Doing these in the wrong order leads to bugs (e.g., if you paginate before filtering, your search results will only show matches from the current page, not the entire dataset).
+
+---
+
+### 1. The Strategy: "Derived State"
+As an SDE 2, avoid storing `filteredData` or `sortedData` in a separate state. This causes **State Sync** bugs. Instead, calculate them during the render phase based on the original data and the current configuration (search query, sort key, page).
+
+---
+
+### 2. Machine Coding Implementation
+
+```jsx
+import React, { useState, useMemo } from 'react';
+
+const mockData = [
+  { id: 1, name: 'Apple', category: 'Fruit', price: 2 },
+  { id: 2, name: 'Carrot', category: 'Vegetable', price: 1 },
+  { id: 3, name: 'Banana', category: 'Fruit', price: 1.5 },
+  { id: 4, name: 'Broccoli', category: 'Vegetable', price: 3 },
+  { id: 5, name: 'Dragonfruit', category: 'Fruit', price: 8 },
+];
+
+export default function DataTable() {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortConfig, setSortConfig] = useState({ key: 'name', direction: 'asc' });
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 2;
+
+  // 1. FILTER ➔ 2. SORT ➔ 3. PAGINATE
+  const processedData = useMemo(() => {
+    // Phase 1: Filter
+    let filtered = mockData.filter(item => 
+      item.name.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    // Phase 2: Sort
+    filtered.sort((a, b) => {
+      if (a[sortConfig.key] < b[sortConfig.key]) {
+        return sortConfig.direction === 'asc' ? -1 : 1;
+      }
+      if (a[sortConfig.key] > b[sortConfig.key]) {
+        return sortConfig.direction === 'asc' ? 1 : -1;
+      }
+      return 0;
+    });
+
+    return filtered;
+  }, [searchTerm, sortConfig]);
+
+  // Phase 3: Paginate
+  const totalPages = Math.ceil(processedData.length / itemsPerPage);
+  const paginatedData = processedData.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+
+  const handleSort = (key) => {
+    setSortConfig(prev => ({
+      key,
+      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
+    }));
+  };
+
+  return (
+    <div className="p-10 max-w-2xl mx-auto">
+      <input 
+        placeholder="Search by name..."
+        className="border p-2 w-full mb-4"
+        onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+      />
+
+      <table className="w-full border-collapse border">
+        <thead>
+          <tr className="bg-gray-100">
+            <th className="border p-2 cursor-pointer" onClick={() => handleSort('name')}>
+              Name {sortConfig.key === 'name' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
+            </th>
+            <th className="border p-2 cursor-pointer" onClick={() => handleSort('category')}>
+              Category
+            </th>
+            <th className="border p-2 cursor-pointer" onClick={() => handleSort('price')}>
+              Price
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {paginatedData.map(item => (
+            <tr key={item.id} className="border">
+              <td className="border p-2">{item.name}</td>
+              <td className="border p-2">{item.category}</td>
+              <td className="border p-2">${item.price}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {/* Pagination Controls */}
+      <div className="flex justify-between items-center mt-4">
+        <button 
+          disabled={currentPage === 1} 
+          onClick={() => setCurrentPage(p => p - 1)}
+          className="px-4 py-2 bg-gray-200 disabled:opacity-50"
+        >
+          Prev
+        </button>
+        <span>Page {currentPage} of {totalPages}</span>
+        <button 
+          disabled={currentPage === totalPages} 
+          onClick={() => setCurrentPage(p => p + 1)}
+          className="px-4 py-2 bg-gray-200 disabled:opacity-50"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+### 3. SDE 2 Deep Dive: The Mechanics
+
+#### A. Order of Operations
+If you have 100 items and your page size is 10:
+- If you **Sort first**, then Paginate, you get the top 10 items of the *entire* sorted list. (Correct).
+- If you **Paginate first**, then Sort, you are only sorting the 10 items currently on the screen. (Wrong).
+
+#### B. The `useMemo` Performance
+As an SDE 2, you should mention that sorting and filtering are $O(N \log N)$ and $O(N)$ operations. 
+- For 5 items, it doesn't matter. 
+- For 5,000 items, calculating this on every keystroke in the search box will freeze the UI. 
+- **`useMemo`** ensures the calculation only runs when `searchTerm` or `sortConfig` actually changes, not on every unrelated re-render.
+
+#### C. Handling the "Empty State"
+Always check for `totalPages === 0`. If the filter returns no results, the pagination logic might try to render "Page 1 of 0," which looks unprofessional.
+
+#### D. Resetting the Page
+Notice the logic: `onChange={(e) => { setSearchTerm(...); setCurrentPage(1); }}`.
+If a user is on page 5 and searches for something that only has 2 results, they will be looking at an empty page 5 unless you explicitly **reset to page 1** on every new search.
+
+### Summary for Machine Coding Round
+1.  **Sequence:** Filter ➔ Sort ➔ Slice (Paginate).
+2.  **Derived State:** Use `useMemo` to compute the list from the raw source.
+3.  **UI Feedback:** Show sort icons (↑/↓) so the user knows the state.
+4.  **Edge Cases:** Handle "No Results" and reset the page index on search.

@@ -1,0 +1,108 @@
+---
+title: Client vs Server Components
+description: Understand the difference between React Client and Server Components, their usage, and benefits
+order: 27
+---
+
+To an SDE 2, the distinction between **React Server Components (RSC)** and **Client Components** is not about where the code *can* run, but where the code **exclusively** runs and how the **Component Tree is serialized** over the network.
+
+This is a shift from a "Single-Runtime" model to a **"Distributed UI"** model.
+
+---
+
+### 1. React Server Components (RSC)
+**The SDE 2 View:** RSCs are components that execute **only on the server**. Their source code, and the libraries they use, are **never sent to the browser**. This results in "Zero-Bundle-Size" components.
+
+**Mechanics:**
+- **Data Access:** Since they run on the server, they can `await` database calls or file systems directly (no `useEffect` or `fetch` calls needed).
+- **The "RSC Payload":** Instead of returning HTML, the server returns a special JSON-like stream (the Flight format). This stream describes the component tree and its props.
+- **Non-Interactive:** Because they don't exist as JavaScript in the browser, they cannot use `useState`, `useEffect`, or Browser APIs (like `window`).
+
+```javascript
+// app/page.js (Server Component by default)
+import db from './db'; 
+import ClientSearch from './ClientSearch';
+
+export default async function Page() {
+  // Executed on the server. 'db' library never leaves the server.
+  const items = await db.query('SELECT * FROM items');
+
+  return (
+    <main>
+      <h1>Inventory</h1>
+      {/* We can pass serializable data (arrays, strings) to Client Components */}
+      <ClientSearch initialItems={items} />
+    </main>
+  );
+}
+```
+
+---
+
+### 2. Client Components
+**The SDE 2 View:** These are the traditional React components we know. They are hydrated in the browser to become interactive. They are marked with the `'use client'` directive.
+
+**Mechanics:**
+- **Serialization Boundary:** The `'use client'` directive marks a "Network Boundary." Everything imported under this directive is bundled and sent to the browser.
+- **Hydration:** React runs the JS in the browser to attach event listeners and manage state.
+
+```javascript
+'use client'; // This is the boundary
+
+import { useState } from 'react';
+
+export default function ClientSearch({ initialItems }) {
+  const [query, setQuery] = useState(''); // Interactive state!
+
+  return (
+    <input 
+      value={query} 
+      onChange={(e) => setQuery(e.target.value)} 
+      placeholder="Search items..." 
+    />
+  );
+}
+```
+
+---
+
+### 3. SDE 2 Deep Dive: The Serialization Boundary
+As an SDE 2, the most important constraint to understand is **Serialization**.
+
+When a Server Component passes props to a Client Component, those props must be **serializable** (Strings, Numbers, Objects, Arrays).
+- **The Fail Case:** You cannot pass a **Function** (like a click handler) from a Server Component to a Client Component. 
+- **Why?** Because functions cannot be converted to a JSON-like string and sent over HTTP. They are not "data"; they are "executable logic."
+
+---
+
+### 4. Under the Hood: The Rendering Lifecycle
+1.  **Server Phase:** React renders the Server Components into a tree. If it hits a Client Component, it creates a "placeholder" in the stream and notes which JS file is needed.
+2.  **Streaming:** The server streams the **RSC Payload** to the browser.
+3.  **Client Phase:** The browser's React runtime receives the payload. It downloads the necessary Client Component JS files.
+4.  **Reconciliation:** React reconstructs the UI tree. It slots the Client Components into the placeholders left by the Server Components.
+
+---
+
+### 5. Why this is an SDE 2 Performance Win
+In a traditional app (CSR), if you use a 100KB library like `date-fns` or `marked`, that 100KB is sent to every user.
+**With RSC:**
+- Use `marked` in a **Server Component** to convert Markdown to HTML.
+- The 100KB library stays on the server.
+- Only the **resulting HTML string** is sent to the user.
+- **Result:** Faster TTI (Time to Interactive) and lower memory usage on the client's V8 engine.
+
+---
+
+### 6. Comparison Table
+
+| Feature | Server Components | Client Components |
+| :--- | :--- | :--- |
+| **Execution** | Server Only | Server (SSR) + Browser (Hydration) |
+| **JS Bundle size** | 0KB (Stay on server) | High (Sent to browser) |
+| **Hooks (`useState`)** | No | Yes |
+| **Backend Access** | Direct (DB/FS) | Indirect (via API/fetch) |
+| **Interactivity** | None | High |
+
+### Summary
+*   **Junior view:** Server components are for data, Client components are for buttons.
+*   **SDE 2 view:** RSC is a **Tree Partitioning Strategy** that uses a **Network Serialization Boundary** to minimize the browser's JavaScript execution and memory overhead by keeping non-interactive logic on the server runtime.

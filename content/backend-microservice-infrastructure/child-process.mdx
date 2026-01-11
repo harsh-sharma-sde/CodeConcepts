@@ -1,0 +1,100 @@
+---
+title: Child Processes
+description: Understand child processes in Node.js, how they differ from worker threads, and when to use them
+order: 75
+---
+
+To an SDE 2, **Child Processes** are the mechanism for **OS-level Parallelism**. Unlike Worker Threads (which stay within the same process), a Child Process is a completely independent instance with its own **Process ID (PID)** and its own **Memory Space** allocated by the Operating System.
+
+In Node.js, this is the primary way to execute shell commands, run non-JS scripts (like Python or C++), or isolate unstable code so it doesn't crash the main server.
+
+---
+
+### 1. The Under-the-Hood Mechanic: `libuv` and `fork()`
+**The SDE 2 View:** When you spawn a child process, Node.js uses the underlying OS system calls (like `fork()` on Unix or `CreateProcess()` on Windows).
+
+**Mechanics:**
+- **Isolation:** Because it’s a separate process, the child does **not** share memory with the parent. If the child hits an `out of memory` error or a segmentation fault, the parent continues to run.
+- **Resources:** Spawning a process is "expensive." Each process has a minimum memory footprint (~30-50MB) and its own V8 instance.
+- **Pipes:** The parent and child communicate via **Standard I/O Streams** (`stdin`, `stdout`, `stderr`).
+
+---
+
+### 2. The Four Methods (Choosing the right tool)
+
+| Method | Best Use Case | Logic |
+| :--- | :--- | :--- |
+| **`spawn`** | Large data / Long-running | Returns **Streams**. Processes data in chunks. |
+| **`exec`** | Small data / Shell commands | Returns a **Buffer**. Buffers entire output in memory. |
+| **`execFile`** | Executables | Similar to `exec` but executes a file directly (no shell). |
+| **`fork`** | Node-to-Node | A special version of `spawn` that creates an **IPC channel**. |
+
+---
+
+### 3. Machine Coding Example: `fork` (Node-to-Node)
+**The SDE 2 View:** `fork` is the standard for offloading a heavy Node.js script. It sets up an internal IPC (Inter-Process Communication) channel so you can pass JSON objects easily.
+
+```javascript
+// parent.js
+const { fork } = require('child_process');
+
+console.log('Parent: Starting heavy computation in background...');
+
+// 1. Fork a new Node.js process
+const child = fork('./child_task.js');
+
+// 2. Listen for messages via the IPC channel
+child.on('message', (result) => {
+  console.log(`Parent: Child finished with result: ${result}`);
+  child.kill(); // SDE 2 Habit: Always manage lifecycle
+});
+
+// 3. Send a command to the child
+child.send({ start: 1, end: 1000000 });
+```
+
+```javascript
+// child_task.js
+process.on('message', (data) => {
+  // 4. Perform heavy work
+  let sum = 0;
+  for (let i = data.start; i < data.end; i++) sum += i;
+
+  // 5. Send result back via IPC
+  process.send(sum);
+});
+```
+
+---
+
+### 4. SDE 2 Deep Dive: IPC (Inter-Process Communication)
+**How does `process.send()` actually work?**
+Under the hood, `libuv` creates a **Unix Domain Socket** (or a Named Pipe on Windows). 
+- When you send an object, Node.js **serializes** it to a JSON string.
+- The string is sent through the socket.
+- The other process receives the string and **deserializes** it back into an object.
+- **Performance Trap:** Passing massive amounts of data through IPC is slow due to this stringification. For high-throughput data, use **Shared Memory** or **Files** instead.
+
+---
+
+### 5. Managing the Lifecycle (Zombies and Orphans)
+An SDE 2 must ensure they don't leak processes.
+- **Zombie:** A process that has finished execution but still has an entry in the OS process table because the parent hasn't "read" its exit code yet.
+- **Orphan:** A child process whose parent has died. Node.js usually handles this, but in some environments, these can stay running forever.
+
+**SDE 2 Fix:** Always listen for the `exit` or `close` events and ensure you handle cleanups.
+
+---
+
+### 6. SDE 2 Decision Matrix: Process vs. Worker
+
+| Scenario | Choice | Why? |
+| :--- | :--- | :--- |
+| **Running a Python script** | **Child Process (`spawn`)** | Worker Threads only run JavaScript. |
+| **Calculating Fibonacci** | **Worker Thread** | Faster communication and lower memory overhead. |
+| **Running a "Plugin" system** | **Child Process** | Total isolation. If the plugin code is malicious or buggy, it can't access the parent's memory. |
+| **Processing 1GB logs** | **Child Process (`spawn`)** | Use OS-level streams to pipe data directly to a file or another tool like `grep`. |
+
+### Summary
+*   **Junior view:** It’s how you run another script.
+*   **SDE 2 view:** It is **OS-level Parallelism** that provides **Total Fault Isolation**. We use **IPC Channels** for Node-to-Node communication and **Streams (`spawn`)** for handling large data, while being careful to manage **Process Lifecycles** to prevent memory leaks and zombie processes.

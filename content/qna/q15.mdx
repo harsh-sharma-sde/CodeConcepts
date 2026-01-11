@@ -1,0 +1,108 @@
+---
+title: Question 15 (System Design)
+description: Learn how to design a scalable newsfeed handling large lists, ads, and media efficiently
+order: 58
+---
+
+To an SDE 2, a **Newsfeed** is a **Dynamic Stream Aggregator**. The core challenge is the **Rendering Pipeline**: how to display an infinite list of diverse content (posts, videos, ads) without exhausting the browser’s memory or dropping frames during scrolling.
+
+---
+
+### 1. Data Fetching: Cursor-based Pagination
+**The SDE 2 View:** Never use **Offset-based pagination** (`LIMIT 10 OFFSET 20`) for a newsfeed. 
+- **The Problem:** If a new post is added to the top of the feed while a user is scrolling, the "Offset" shifts, and the user sees the same post twice. 
+- **The Solution:** Use **Cursors** (usually a timestamp or a unique ID of the last item seen).
+
+```javascript
+// SDE 2 Fetch Logic
+const fetchFeed = async (lastItemCursor) => {
+  const response = await fetch(`/api/feed?after=${lastItemCursor}&limit=10`);
+  return response.json(); // Returns { data: [...], nextCursor: 'ts_12345' }
+};
+```
+
+---
+
+### 2. List Rendering: Virtualization (Windowing)
+**The SDE 2 View:** If a feed has 1,000 posts, and each post has multiple DOM nodes, the browser’s **Accessibility Tree** and **Layout Engine** will crawl to a halt.
+
+**Mechanics:** Use **Virtualization**. Only render the items currently in the viewport (plus 2-3 items as a buffer).
+- **Recycling:** When a post scrolls out of view, the DOM node is either removed or "recycled" for the next post coming into view.
+- **Libraries:** `react-window` or `react-virtuoso`.
+
+---
+
+### 3. Media Strategy: Autoplay & Intersection Observer
+**The SDE 2 View:** We must manage the lifecycle of media (videos/GIFs) to save battery and CPU.
+
+**Mechanics:**
+1.  **Intersection Observer:** Each video component observes itself.
+2.  **Logic:** If `isIntersecting` is > 80%, call `video.play()`. If it drops below 80%, call `video.pause()`.
+3.  **Pre-warming:** When a video is in the "buffer" zone (near the viewport), start fetching the first 2 segments of the video (HLS/DASH) so it plays instantly when scrolled into view.
+
+```javascript
+// Autoplay Logic
+const useAutoplay = (videoRef) => {
+  useEffect(() => {
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) videoRef.current.play();
+      else videoRef.current.pause();
+    }, { threshold: 0.8 });
+
+    observer.observe(videoRef.current);
+    return () => observer.disconnect();
+  }, []);
+};
+```
+
+---
+
+### 4. Ad Injection: The Interleaving Pattern
+**The SDE 2 View:** Ads are not "part" of the feed data; they are injected via a separate service. 
+
+**Mechanics:**
+- **Interleaving:** After fetching the feed, the client-side logic "zips" ads into the list at specific intervals (e.g., every 5th post).
+- **Tracking:** Use a "pixel" (a 1x1 invisible image) or an Intersection Observer to trigger an "Impression" event to the ad server only when the user actually *sees* the ad.
+
+```javascript
+// SDE 2 Interleaving Logic
+const injectAds = (posts, ads) => {
+  const combined = [...posts];
+  ads.forEach((ad, index) => {
+    // Inject an ad every 5 items
+    const position = (index + 1) * 5;
+    combined.splice(position, 0, { ...ad, isAd: true });
+  });
+  return combined;
+};
+```
+
+---
+
+### 5. SDE 2 Deep Dive: Layout Stability
+**The SDE 2 View:** Newsfeeds are prone to **Cumulative Layout Shift (CLS)**. If an image finishes loading and pushes the text down while the user is reading, the UX is ruined.
+
+**The Fix:**
+- **Aspect Ratio Boxes:** Always request the aspect ratio of the media from the backend. 
+- **CSS:** Apply `aspect-ratio` to the container so the browser reserves the exact height before the image/video arrives.
+
+---
+
+### 6. Performance & State Management: Normalization
+**The SDE 2 View:** If a user "Likes" a post in the feed, and that same post is visible in a "Suggested" sidebar or their Profile, the state must stay in sync.
+
+**Mechanics:** Use a **Normalized Store** (like TanStack Query or Redux).
+- Instead of: `[ {id: 1, liked: false}, {id: 2, liked: false} ]`
+- Use: `{ posts: { "1": {liked: false} }, feedIds: ["1", "2"] }`
+- Any update to post "1" automatically updates all components referencing that ID.
+
+---
+
+### 7. SDE 2 Checklist: Resilience
+1.  **Skeleton Screens:** Show grey boxes that match the aspect ratio of the content to provide a "content is coming" feel.
+2.  **Retry Logic:** If the infinite scroll fetch fails, show a "Tap to Retry" button at the bottom of the list.
+3.  **Connectivity Awareness:** If the user is on a slow 3G connection (detected via `navigator.connection`), don't autoplay videos and serve lower-resolution images.
+
+### Summary
+*   **Junior view:** Map an array of posts and add a `scroll` listener.
+*   **SDE 2 view:** It is a **High-Throughput Rendering Pipeline**. We use **Cursor-based pagination** for data integrity, **Virtualization** for memory management, **Intersection Observers** for media lifecycle and ad impressions, and **Aspect Ratio containers** to ensure layout stability.

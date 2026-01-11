@@ -1,0 +1,93 @@
+---
+title: Code Splitting (Dynamic Imports)
+description: Learn how code splitting works using dynamic imports to improve performance and Core Web Vitals
+order: 63
+---
+
+To an SDE 2, **Code Splitting** is the practice of partitioning a monolithic JavaScript bundle into smaller, discrete "chunks." The goal is to move from a **"Load Everything Upfront"** model to a **"Load on Demand"** model, directly improving **TTI (Time to Interactive)** and **FID/INP**.
+
+---
+
+### 1. The Under-the-Hood Mechanic: The `import()` Promise
+In standard ES modules, `import x from 'y'` is **static** and **synchronous**. The browser (and bundler) must resolve it before executing the code. 
+
+**Dynamic `import()`** is different:
+1.  **Parsing:** When the bundler (Webpack/Vite) encounters `import('./module')`, it flags this as a "Split Point."
+2.  **Chunking:** Instead of merging `./module` into the `main.js` bundle, the bundler creates a separate file (e.g., `src_module_js.chunk.js`).
+3.  **Runtime Fetching:** In the browser, the `import()` function returns a **Promise**. When called, the browser's network layer initiates a request for that specific chunk.
+4.  **Execution:** Once the script arrives, the browser executes it and resolves the promise with the module's exports.
+
+---
+
+### 2. Implementation: React `lazy` & `Suspense`
+In React, we use `React.lazy` to wrap these dynamic imports so they can be rendered as regular components.
+
+```jsx
+import React, { Suspense, lazy } from 'react';
+
+// The bundler sees this and creates a separate JS chunk
+const AnalyticsDashboard = lazy(() => import('./AnalyticsDashboard'));
+
+function App() {
+  return (
+    <div>
+      <h1>My App</h1>
+      {/* 
+        Suspense handles the 'Pending' state of the import Promise.
+        It prevents the rest of the UI from crashing while the chunk loads.
+      */}
+      <Suspense fallback={<p>Loading Dashboard...</p>}>
+        <AnalyticsDashboard />
+      </Suspense>
+    </div>
+  );
+}
+```
+
+---
+
+### 3. SDE 2 Strategy: Route-based vs. Component-based Splitting
+
+#### A. Route-based (High ROI)
+The most common strategy. A user visiting the `/login` page shouldn't have to download the code for the `/dashboard` or `/admin` panels. 
+- **Impact:** Drastically reduces the "Initial Bundle Size."
+
+#### B. Component-based (Granular)
+Splitting out heavy components that aren't immediately visible (e.g., Modals, Charts, Data Grids).
+- **Example:** A "Terms and Conditions" modal that 99% of users never open. Keeping it in the main bundle is a waste of bandwidth.
+
+---
+
+### 4. SDE 2 Deep Dive: Prefetching & Preloading
+As an SDE 2, you don't want the user to wait for a "Loading..." spinner after they click a button. You want the code to be there **just before** they need it.
+
+**The Mechanics:**
+Using **Magic Comments**, you can hint to the browser to download chunks during idle time.
+
+```javascript
+// Webpack/Vite Magic Comments
+const Settings = lazy(() => 
+  import(/* webpackPrefetch: true */ './Settings')
+);
+```
+- **`prefetch`**: Browser downloads the file in the background when the main thread is idle. Use this for resources needed for the *next* navigation.
+- **`preload`**: Browser downloads the file with high priority alongside the main bundle. Use this for resources needed *sooner* in the current page lifecycle.
+
+---
+
+### 5. SDE 2 Performance Trade-offs: The "Waterfall" Problem
+While splitting is good, **Over-splitting** is a risk.
+- **The Problem:** If `Chunk A` imports `Chunk B`, which imports `Chunk C`, the browser has to wait for A to finish before it even *knows* it needs B. This creates a **Network Waterfall**.
+- **The Solution:** Use an SDE 2 tool like **Webpack Bundle Analyzer** or **Vite-plugin-visualizer**. 
+- **Rule of Thumb:** A chunk should generally be at least **10-20KB**. If you have hundreds of 1KB chunks, the HTTP request overhead (even with HTTP/2) might outweigh the benefits of splitting.
+
+---
+
+### 6. Caching & Long-term Versioning
+Code splitting is vital for **Cache Hit Ratios**.
+- **Monolith:** If you change 1 line of code in a 2MB bundle, all users must re-download 2MB.
+- **Split:** If you change a component in `Settings.js`, only that specific chunk’s hash changes. The `main.js` and `Dashboard.js` chunks remain cached in the user's browser.
+
+### Summary
+*   **Junior view:** It makes the `main.js` file smaller.
+*   **SDE 2 view:** It is an **Asynchronous Resource Management** strategy. We use **Dynamic Imports** to break the **Critical Rendering Path**, utilize **Resource Hints** (Prefetch/Preload) to eliminate "Load Latency," and balance **Chunk Granularity** to maximize **Browser Caching** while avoiding **Network Waterfalls**.

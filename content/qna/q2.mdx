@@ -1,0 +1,95 @@
+---
+title: Question 2 (JS & TS)
+description: Understand how the `new` keyword works in JavaScript to create instances and set up prototypes
+order: 14
+---
+
+To an SDE 2, the `new` keyword is an operator that triggers a specific, four-step **Object Initialization Protocol**. It bridges the gap between a regular function and the creation of a stateful instance linked to a prototype chain.
+
+---
+
+### 1. The Under-the-Hood Mechanics
+When you execute `new User()`, the JavaScript engine (V8) performs the following steps:
+
+1.  **Object Creation:** A brand new, empty plain JavaScript object `{}` is created in the **Heap memory**.
+2.  **Prototype Linking:** The engine sets the internal `[[Prototype]]` (accessible via `__proto__`) of this new object to point to the **constructor function’s `.prototype` property**. This establishes the inheritance chain.
+3.  **Binding & Execution:** The constructor function is invoked. Crucially, the **`this` context** for that execution is bound to the new object created in Step 1.
+4.  **The "Return" Logic:**
+    *   If the constructor function returns an **Object** (or function/array), that object is returned instead of the instance.
+    *   If the constructor returns a **Primitive** (number, string, null) or nothing, the engine returns the instance created in Step 1.
+
+---
+
+### 2. Simple Code Example
+
+```javascript
+function Person(name) {
+    this.name = name;
+}
+
+// Adding a method to the prototype
+Person.prototype.sayHi = function() {
+    console.log(`Hi, I'm ${this.name}`);
+};
+
+const bob = new Person("Bob");
+
+// Internal verification:
+console.log(Object.getPrototypeOf(bob) === Person.prototype); // true
+bob.sayHi(); // "Hi, I'm Bob"
+```
+
+---
+
+### 3. SDE 2 Deep Dive: The Edge Cases
+
+#### A. The "Object Return" Trap
+One common SDE 2 interview question is: "What happens if a constructor returns an object?"
+
+```javascript
+function Counter() {
+    this.count = 0;
+    return { message: "I am a spy!" }; // Returning a non-primitive
+}
+
+const c = new Counter();
+console.log(c.count);   // undefined
+console.log(c.message); // "I am a spy!"
+// The instance created by 'new' was discarded.
+```
+
+#### B. Internal Slots: `[[Construct]]` vs `[[Call]]`
+Not all functions can be used with `new`. Internally, JavaScript functions have two different internal methods:
+*   **`[[Call]]`**: Executed when you call a function normally (`fn()`).
+*   **`[[Construct]]`**: Executed when you use `new`.
+
+**Arrow functions** do not have a `[[Construct]]` method and they do not have a `.prototype` property. Therefore, if you try to use `new` with an arrow function, the engine throws a `TypeError`.
+
+#### C. V8 Optimization: Hidden Classes (Shapes)
+As an SDE 2, you should know that when properties are assigned to `this` inside a constructor, V8 creates a **Hidden Class** (or Shape). 
+If you always initialize your properties in the **same order** inside the constructor, V8 can optimize property access by caching their memory offsets. If you initialize them in different orders or add properties later, you "de-optimize" the object's shape.
+
+---
+
+### 4. Simulating `new` (Polyfill Logic)
+A great way to prove you understand the mechanics is to write a function that mimics the `new` keyword:
+
+```javascript
+function myNew(constructor, ...args) {
+    // 1. Create a new object
+    // 2. Link the prototype
+    const obj = Object.create(constructor.prototype);
+
+    // 3. Execute constructor with 'this' as our new object
+    const result = constructor.apply(obj, args);
+
+    // 4. Return the result if it's an object, otherwise return our new instance
+    return (result && typeof result === 'object') ? result : obj;
+}
+
+const alice = myNew(Person, "Alice");
+console.log(alice.name); // "Alice"
+```
+
+### Summary for SDE 2
+The `new` keyword is a factory mechanism that automates **memory allocation** and **prototypal delegation**. It forces a specific `this` binding and ensures that the newly created object inherits from the constructor's blueprint, while handling the nuances of return value types and V8's internal object shapes.

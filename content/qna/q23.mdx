@@ -1,0 +1,94 @@
+---
+title: Question 23 (Backend)
+description: Learn how Docker networking works, including bridge, overlay, and host networks for multi-container setups
+order: 90
+---
+
+To an SDE 2, **Docker Networking** is a combination of **Linux Kernel Namespaces** and **Virtual Switching**. It is the mechanism that allows isolated processes to communicate as if they were on separate physical machines, while actually sharing the same host hardware.
+
+---
+
+### 1. The Under-the-Hood Mechanic: `veth` Pairs
+**The SDE 2 View:** Docker networking is powered by **Virtual Ethernet (`veth`) pairs**. 
+
+**Mechanics:**
+When you start a container, Docker creates a "pipe" made of two virtual interfaces:
+1.  **Interface A:** Placed inside the container's **Network Namespace** (usually named `eth0`).
+2.  **Interface B:** Stays on the host's **Network Namespace**, attached to a virtual bridge (usually named `docker0`).
+
+Data sent from the container's `eth0` instantly appears at the host's end of the pipe, where it is routed by the Docker bridge.
+
+---
+
+### 2. The Default Bridge Network (`docker0`)
+**The SDE 2 View:** This is a **Virtual Layer 2 Switch**.
+
+**Mechanics:**
+- Every container on the same bridge is assigned a private IP address (e.g., `172.17.0.x`).
+- To communicate with the outside world, Docker uses **IP Tables (NAT - Network Address Translation)**. 
+- When a container sends a packet to the internet, the host "masquerades" the packet, replacing the container's private IP with the host's public IP.
+
+---
+
+### 3. User-Defined Bridge (Recommended)
+**The SDE 2 View:** This provides **Automatic Service Discovery** via an internal DNS server.
+
+**Mechanics:**
+Unlike the default bridge, user-defined bridges run a built-in DNS resolver. When Container A tries to reach `http://db`, the Docker daemon intercepts the DNS request and returns the private IP of the container named `db`.
+
+```yaml
+# docker-compose.yml
+services:
+  app:
+    build: .
+    networks:
+      - backend_net
+  db:
+    image: postgres
+    networks:
+      - backend_net
+
+networks:
+  backend_net: # This creates a private virtual switch
+    driver: bridge
+```
+
+---
+
+### 4. SDE 2 Strategy: Choosing the Driver
+
+| Driver | Mechanics | Best Use Case |
+| :--- | :--- | :--- |
+| **Bridge** | Virtual switch + NAT. | Standard microservices on a single host. |
+| **Host** | No isolation. Container uses host's IP/Ports directly. | **High Performance:** Removes NAT overhead (e.g., high-freq proxies). |
+| **Overlay** | VXLAN tunnels across multiple hosts. | **Distributed Systems:** Docker Swarm or Kubernetes. |
+| **None** | Loopback only. No external network. | **Security:** Batch processing of sensitive data. |
+
+---
+
+### 5. SDE 2 Deep Dive: Port Mapping & IPTables
+When you run `docker run -p 8080:80`, you are not "opening a port" in the traditional sense. You are adding a **DNAT (Destination NAT)** rule to the Linux Kernel's IPTables.
+
+**The Logic:**
+- A packet arrives at the Host on port `8080`.
+- The Kernel sees the IPTables rule: *"Anything for 8080, rewrite the destination to 172.17.0.2:80"*.
+- The packet is then routed through the `veth` pair into the container.
+
+---
+
+### 6. Performance & Latency
+As an SDE 2, you must know the "NAT Tax."
+- **Bridge Mode** introduces a small latency (~5-10%) because every packet must be processed by the Linux bridge and have its headers rewritten (NAT).
+- **Host Mode** has zero network overhead. If your service handles 100k requests/second, the CPU cycles saved by avoiding NAT are significant.
+
+---
+
+### 7. SDE 2 Summary Checklist
+1.  **Isolation:** Use separate bridge networks to isolate tiers (e.g., `frontend_net` and `backend_net`). The DB should never be on the `frontend_net`.
+2.  **DNS:** Rely on **Container Names** for communication, never hardcoded IPs.
+3.  **Security:** Only "Expose" (`-p`) ports that must be public. Internal communication happens over the virtual bridge and doesn't need exposed ports.
+4.  **IPv6:** Docker supports it, but it requires manual configuration in `daemon.json`.
+
+### Summary
+*   **Junior view:** It’s how I access my app on `localhost:8080`.
+*   **SDE 2 view:** It is a **Namespace-isolated network stack** connected via **veth pairs** to a **Virtual Bridge**, where traffic is orchestrated by the Linux Kernel using **IPTables rules** and **NAT** for external communication and internal **Service Discovery**.

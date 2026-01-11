@@ -1,0 +1,90 @@
+---
+title: Question 18 (Web Vital)
+description: Understand how fetchpriority helps browsers load critical resources faster and improve Core Web Vitals
+order: 70
+---
+
+To an SDE 2, **Priority Hints (`fetchpriority`)** is a browser-level API used to manually override the **Resource Scheduler's** default heuristic. It allows us to fine-tune the **Critical Rendering Path** by communicating the relative importance of a resource directly to the browser's network stack.
+
+---
+
+### 1. The Under-the-Hood Mechanic: The Resource Scheduler
+When the browser's **Preload Scanner** finds a URL (in HTML or CSS), it doesn't just download it immediately. It places the request into a priority-based queue.
+
+**Default Browser Heuristics:**
+*   **Highest:** Main HTML, CSS, and synchronous `<script>` in the `<head>`.
+*   **High:** Fonts, asynchronous scripts.
+*   **Low:** Images, `<script async/defer>` at the end of the body.
+
+**The Problem:** The browser is "blind" to the visual importance of an image until the **Layout Phase**. It treats the "Hero Image" (the LCP element) and a "Footer Logo" with the same **Low** priority because they are both `<img>` tags.
+
+**The Fix:** `fetchpriority` allows you to move a specific resource from the "Low" queue to the "High" queue (or vice versa) during the **Discovery Phase**, long before layout is calculated.
+
+---
+
+### 2. Code Examples
+
+#### A. Boosting the LCP (Hero Image)
+Images are usually low priority. We want the Hero image to compete with CSS and JS for bandwidth.
+
+```html
+<!-- 
+  The browser's Preload Scanner sees this and assigns 
+  'High' priority immediately, bypassing the 'Low' default.
+-->
+<img src="/hero-banner.jpg" fetchpriority="high" alt="Hero">
+```
+
+#### B. Lowering Priority for Non-Critical Scripts
+Third-party scripts (like Analytics) are often assigned "High" priority if placed in the `<head>`. This can "crowd out" your own critical JS.
+
+```html
+<!-- 
+  Assigning 'low' ensures this script doesn't block 
+  bandwidth for more critical application code.
+-->
+<script src="https://analytics.com/library.js" async fetchpriority="low"></script>
+```
+
+#### C. Programmatic Fetch
+You can also influence the priority of API calls.
+
+```javascript
+// High priority for a critical 'Check Auth' call
+fetch('/api/user/session', { priority: 'high' });
+
+// Low priority for background logging
+fetch('/api/log', { method: 'POST', priority: 'low', body: data });
+```
+
+---
+
+### 3. SDE 2 Deep Dive: Interaction with HTTP/2 and HTTP/3
+As an SDE 2, you should understand how this affects the wire.
+
+*   **HTTP/2 Multiplexing:** `fetchpriority` influences the **Weighting** of streams. A "High" priority resource is given more "frames" in the TCP pipe than a "Low" priority one.
+*   **HTTP/3 (QUIC):** In QUIC, priorities are even more critical because there is no head-of-line blocking. `fetchpriority` tells the server's scheduler which UDP packets to send first.
+
+---
+
+### 4. Comparison: `preload` vs. `fetchpriority`
+SDE 2s often confuse these. They are complementary, not identical.
+
+*   **`preload`**: Affects **Discovery**. It tells the browser: "You don't see this yet, but I need it."
+*   **`fetchpriority`**: Affects **Priority**. It tells the browser: "You see this, but it's more/less important than your default guess."
+
+**The "Gold Standard" for LCP:**
+```html
+<link rel="preload" href="hero.jpg" as="image" fetchpriority="high">
+```
+
+---
+
+### 5. SDE 2 Strategy: Use Cases
+1.  **Image Carousels:** The first image gets `fetchpriority="high"`. All subsequent images get `fetchpriority="low"`.
+2.  **Modals:** If a user clicks a button to open a heavy modal, the `fetch` for the modal's data should be `high`.
+3.  **Above-the-Fold vs. Below-the-Fold:** In modern frameworks, we often have multiple images. We use `fetchpriority="high"` for the top image and `loading="lazy"` (which implies low priority) for others.
+
+### Summary
+*   **Junior view:** It's an attribute to make things load faster.
+*   **SDE 2 view:** It is a **Scheduling Hint** that influences the **Browser's Internal Priority Queue** and **HTTP Stream Weighting**. It solves the "Context Blindness" of the Preload Scanner, allowing us to align **Network Activity** with the **Visual Importance** of elements.

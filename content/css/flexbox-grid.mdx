@@ -1,0 +1,107 @@
+---
+title: CSS Flexbox vs Grid
+description: Learn the differences between Flexbox and Grid, when to use each, and how they help in building responsive layouts
+order: 35
+---
+
+To an SDE 2, the choice between Flexbox and Grid isn't about "which one is better," but about the **Dimensionality of the Layout** and the **Source of Truth for Sizing** (Content-out vs. Layout-in).
+
+---
+
+### 1. The Dimensionality Rule
+*   **Flexbox (1D):** Designed for distributing space along a **single axis** (either a row or a column). While it can wrap, it cannot coordinate the sizing of items across multiple rows.
+*   **Grid (2D):** Designed for **rows and columns simultaneously**. It allows you to align items in two dimensions, creating a strict coordinate system.
+
+---
+
+### 2. The SDE 2 View: Content-out vs. Layout-in
+
+#### Flexbox: "Content-out"
+In Flexbox, the size of the items usually dictates the layout. The container looks at how much space the content needs and then decides how to grow or shrink them to fit.
+*   **Mechanics:** The browser engine calculates the `flex-basis` of each item, then calculates the **"Positive Free Space"** or **"Negative Free Space"** in the container, and finally distributes that space based on `flex-grow` and `flex-shrink` factors.
+
+```javascript
+// Flexbox Logic (Conceptual)
+AvailableSpace = ContainerWidth - TotalFlexBasis;
+if (AvailableSpace > 0) {
+  itemWidth = flexBasis + (AvailableSpace * (flexGrow / totalGrow));
+}
+```
+
+#### Grid: "Layout-in"
+In Grid, you define the layout (the tracks) first, and the items are forced into that structure. The container dictates the size of the items.
+*   **Mechanics:** The browser creates a geometric grid of tracks. It uses **`fr` (Fractional)** units to divide available space after accounting for fixed-size tracks and gaps.
+
+---
+
+### 3. Code Examples
+
+#### Flexbox: The Navigation Bar (1D)
+Perfect for when you want items to sit in a line and share space, but they don't need to align with items in a different row.
+
+```css
+.navbar {
+  display: flex;
+  justify-content: space-between; /* Distribute space on main axis */
+  align-items: center;          /* Align on cross axis */
+}
+
+.nav-item {
+  flex: 1; /* Grow and shrink equally */
+}
+```
+
+#### Grid: The Dashboard (2D)
+Perfect for complex layouts where components must align both horizontally and vertically.
+
+```css
+.dashboard {
+  display: grid;
+  grid-template-columns: 250px 1fr 1fr; /* Fixed sidebar, two flexible columns */
+  grid-template-rows: auto 1fr auto;    /* Header, Content, Footer */
+  gap: 20px;
+  grid-template-areas: 
+    "header header header"
+    "sidebar main stats"
+    "footer footer footer";
+}
+
+.sidebar { grid-area: sidebar; }
+```
+
+---
+
+### 4. SDE 2 Deep Dive: Performance & Rendering
+
+#### Layout Thrashing
+As an SDE 2, you know that **Flexbox is computationally "cheaper"** for the browser's layout engine than Grid. 
+- **Flexbox** is a linear algorithm. The browser calculates the size of items in one pass.
+- **Grid** requires a more complex two-dimensional constraint solver. In very deep trees or extremely large grids (e.g., 1000+ cells), Grid can lead to longer **Reflow (Layout)** times.
+
+#### The "Holy Grail" of Alignment
+Grid allows for **overlapping elements** without using `position: absolute`. By placing two items in the same `grid-area`, you can stack them perfectly. Flexbox cannot do this.
+
+---
+
+### 5. Alignment Mechanics
+Flexbox and Grid share the "Box Alignment" specification, but they apply it differently:
+- **`justify-content`**: Moves items along the **Main Axis** (Flex) or **Inline Axis** (Grid).
+- **`align-items`**: Moves items along the **Cross Axis** (Flex) or **Block Axis** (Grid).
+- **`place-items`**: A shorthand only for Grid (`align-items` + `justify-items`).
+
+---
+
+### 6. SDE 2 Decision Matrix
+
+| Scenario | Recommendation | Why? |
+| :--- | :--- | :--- |
+| **Navbar / Toolbar** | **Flexbox** | 1D distribution, content-driven width. |
+| **Card List (Auto-fit)** | **Grid** | `grid-template-columns: repeat(auto-fit, ...)` creates a perfect grid without media queries. |
+| **Complex Page Layout** | **Grid** | 2D control, `grid-template-areas` is easier to maintain. |
+| **Centering a single item** | **Flexbox** | `display: flex; justify-content: center; align-items: center;` is the industry standard. |
+| **Overlapping UI Elements** | **Grid** | Allows stacking items in the same cell. |
+
+### Summary
+*   **Flexbox** is for **distributing space** among a group of items (1D). It is **Content-driven**.
+*   **Grid** is for **defining a structure** and placing items into it (2D). It is **Container-driven**.
+*   Use Flexbox for small components and linear layouts; use Grid for page-level architecture and strict alignments.

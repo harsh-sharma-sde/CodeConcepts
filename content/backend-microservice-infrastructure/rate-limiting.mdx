@@ -1,0 +1,108 @@
+---
+title: Rate Limiting
+description: Understand rate limiting, why it’s important for APIs, common algorithms, and how to implement it
+order: 78
+---
+
+To an SDE 2, **Rate Limiting** is a **System Stability** mechanism. It protects your infrastructure from cascading failures caused by **Noisy Neighbors**, **DoS attacks**, or **Scrapers**, while ensuring fair resource allocation among users.
+
+---
+
+### 1. The Core Algorithms
+
+As an SDE 2, you must know which algorithm to pick based on the traffic pattern you want to enforce.
+
+#### A. Token Bucket (Most Common)
+*   **The SDE 2 View:** Allows for **Burstiness**.
+*   **Mechanics:** A bucket holds $N$ tokens. Every request consumes a token. Tokens are refilled at a constant rate $R$. If the bucket is empty, the request is dropped.
+*   **Use Case:** APIs where a user might occasionally send 10 requests at once but stays under an average per-minute limit.
+
+#### B. Fixed Window Counter
+*   **The SDE 2 View:** Simple but **Flawed**.
+*   **Mechanics:** Uses a static window (e.g., 1 minute). If the limit is 100, and a user sends 100 requests at 10:00:59 and another 100 at 10:01:01, they successfully sent 200 requests in 2 seconds.
+*   **Problem:** The "Boundary Burst" can double your allowed throughput at the edge of the window.
+
+#### C. Sliding Window Counter
+*   **The SDE 2 View:** The "Gold Standard" for accuracy.
+*   **Mechanics:** Instead of a static window, it looks at the timestamp of the last $N$ requests or uses a weighted average of the current and previous fixed windows.
+
+---
+
+### 2. Distributed Rate Limiting (The "Cluster" Problem)
+**The SDE 2 View:** In a real production environment, your app runs on 10 servers. If you store the rate limit in local memory, a user can hit each server 10 times, effectively bypassing your limit.
+
+**The Solution:** Use an **Atomic Data Store** (like **Redis**).
+
+**Mechanics:**
+1.  The App receives a request.
+2.  It asks Redis: "How many requests has `user_123` sent in the last 60 seconds?"
+3.  Redis increments the counter and returns the value **atomically**.
+4.  If the value exceeds the limit, the App returns `429 Too Many Requests`.
+
+---
+
+### 3. Machine Coding Example: Node.js + Redis (Fixed Window)
+
+```javascript
+const redis = require('redis');
+const client = redis.createClient();
+
+async function isRateLimited(userId) {
+  const key = `rate_limit:${userId}`;
+  const limit = 5; // Max 5 requests
+  const windowSize = 60; // per 60 seconds
+
+  // SDE 2 Logic: Use Redis MULTI to ensure atomicity
+  const [currentCount] = await client
+    .multi()
+    .incr(key)      // Increment the counter
+    .expire(key, windowSize, 'NX') // Set expiry ONLY if it doesn't exist
+    .exec();
+
+  return currentCount > limit;
+}
+
+// Middleware Usage
+app.use(async (req, res, next) => {
+  const userId = req.ip; // Or a JWT user ID
+  if (await isRateLimited(userId)) {
+    // SDE 2 Best Practice: Inform the client when they can try again
+    res.set('Retry-After', 60); 
+    return res.status(429).send('Too Many Requests');
+  }
+  next();
+});
+```
+
+---
+
+### 4. SDE 2 Deep Dive: The "Race Condition"
+If you use a "Get then Set" pattern in Redis:
+1.  Thread A gets count (4).
+2.  Thread B gets count (4).
+3.  Thread A sets count (5).
+4.  Thread B sets count (5).
+*Result:* Two requests happened, but the counter only went up by 1.
+
+**The Fix:** Use **Lua Scripts** or **Redis Atomic Operations (`INCR`)**. Lua scripts run inside Redis as a single atomic command, ensuring no other request can interfere mid-calculation.
+
+---
+
+### 5. Client-Side Resilience: Backoff
+As an SDE 2, you don't just "fail" when you hit a rate limit. You implement **Exponential Backoff with Jitter**.
+
+**Logic:**
+If the server returns a 429, the client waits 1s, then 2s, then 4s, plus a **random "Jitter"** (e.g., +/- 200ms).
+*Why Jitter?* If 1,000 clients all hit a rate limit at the same time and all retry at exactly 1 second, they will create a "Thundering Herd" that crashes the server again. Jitter spreads the load.
+
+---
+
+### 6. SDE 2 Summary Checklist
+1.  **Status Code:** Always use `429`.
+2.  **Headers:** Provide `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`.
+3.  **Tiering:** Different limits for Anonymous vs. Logged-in users.
+4.  **Granularity:** Limit by IP for DoS, but limit by UserID for business logic.
+
+### Summary
+*   **Junior view:** It stops users from clicking a button too much.
+*   **SDE 2 view:** It is a **Distributed Traffic Shaping** mechanism. We use **Atomic Operations in Redis** to prevent bypasses in clustered environments and implement **Sliding Windows** to prevent boundary bursts, ensuring the **Availability** of the service under stress.

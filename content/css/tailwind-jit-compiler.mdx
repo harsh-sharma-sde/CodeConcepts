@@ -1,0 +1,95 @@
+---
+title: Tailwind CSS JIT Compiler
+description: Understand Tailwind CSS's Just-In-Time (JIT) compiler, how it works, and its benefits for modern styling
+order: 39
+---
+
+To an SDE 2, **Tailwind's JIT (Just-In-Time) compiler** represents a shift from **Enumerative CSS** to **On-Demand Generative CSS**. 
+
+Before JIT (v2.0 and below), Tailwind was "Ahead-of-Time" (AOT). It generated thousands of CSS rules upfront (creating a multi-megabyte file), and you used PurgeCSS to delete the unused ones. JIT flipped this: it starts with an empty CSS file and generates only the rules it sees you using in your source code.
+
+---
+
+### 1. The Under-the-Hood Mechanic: Tokenization
+The JIT compiler is essentially a **Static Analysis Tool** that acts as a PostCSS plugin.
+
+1.  **File Watching:** The compiler watches your `content` paths (HTML, TSX, etc.).
+2.  **Regex Scanning:** It doesn't execute your code. It uses high-performance Regex to scan your files for "potential" class names. It looks for any string that *might* be a Tailwind utility.
+3.  **The "Candidate" List:** If it finds the string `pt-4`, it checks its internal map of utilities. If it's a match, it generates the corresponding CSS rule: `.pt-4 { padding-top: 1rem; }`.
+4.  **Incremental Building:** Because it only generates what is needed, the development CSS file stays tiny (usually < 10KB), leading to incredibly fast Browser HMR (Hot Module Replacement).
+
+---
+
+### 2. Arbitrary Value Support (Dynamic Parsing)
+The biggest architectural win of JIT is **Arbitrary Values** (using square brackets). 
+
+**Mechanics:**
+When JIT sees `top-[117px]`, it doesn't look it up in a pre-defined list. It **parses the token**:
+1.  Identifies the prefix: `top`.
+2.  Extracts the value inside the brackets: `117px`.
+3.  Dynamically generates a new CSS rule and injects it into the style sheet.
+
+```html
+<!-- JIT generates: .top-\[117px\] { top: 117px; } -->
+<div class="top-[117px]"></div>
+```
+
+---
+
+### 3. SDE 2 Deep Dive: The Content Problem
+A common "SDE 2 level" bug is trying to generate class names dynamically in code:
+
+```javascript
+// ❌ This will NOT work with JIT
+const color = "blue";
+return <div className={`bg-${color}-500`}></div>
+```
+
+**Why?**
+The JIT compiler **does not run your JavaScript**. It performs static string extraction. It looks for the literal string `bg-blue-500`. Since that string doesn't exist in your source code (it's fragmented), the compiler never generates the CSS for it. 
+
+**Solution:** You must use full string literals or use a "safelist" in your config.
+
+---
+
+### 4. Code Example: Configuration
+
+To make JIT work, you must tell it exactly where to look for "Candidates."
+
+```javascript
+// tailwind.config.js
+module.exports = {
+  // The 'Scanner' will only look inside these files
+  content: [
+    "./src/**/*.{js,ts,jsx,tsx}",
+    "./public/index.html",
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+}
+```
+
+---
+
+### 5. Performance Comparison: AOT vs. JIT
+
+| Feature | Old Tailwind (AOT) | Tailwind JIT |
+| :--- | :--- | :--- |
+| **Development File Size** | 3MB - 10MB (Huge) | ~10KB (Tiny) |
+| **Build Speed** | Slower (Full generation + Purge) | Faster (Incremental) |
+| **CSS Features** | Limited to config file | Unlimited (Arbitrary values) |
+| **Browser Performance** | Heavy (Engine struggles with 10MB CSS) | Light (Only used CSS is parsed) |
+
+---
+
+### 6. Architectural Insight: Zero Runtime
+Unlike CSS-in-JS libraries (like Emotion or Styled-components), Tailwind's JIT is a **Build-time** or **Watcher-time** tool. 
+- It generates standard, raw CSS. 
+- There is **zero JavaScript overhead** in the browser to calculate styles. 
+- As an SDE 2, you prefer this for performance-critical applications because it eliminates the "Style Injection" overhead and avoids "Layout Thrashing" caused by runtime style recalculations.
+
+### Summary
+*   **Junior view:** It’s faster and I can use brackets for random values.
+*   **SDE 2 view:** It is a **Source-code Tokenizer** that uses **Static Analysis** to dynamically generate an optimized CSS bundle, enabling **Zero-Runtime arbitrary styling** while maintaining a minimal CSSOM footprint for the browser.

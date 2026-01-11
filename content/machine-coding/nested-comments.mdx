@@ -1,0 +1,167 @@
+---
+title: Nested Comments with Recursive Components
+description: Learn how to implement nested comments (like Reddit) in React using recursive components
+order: 47
+---
+
+To an SDE 2, **Nested Comments** are a classic exercise in **Recursive Data Structures** and **Tree Traversal**. 
+
+The goal is to render a tree where each node is a comment that can contains a list of children (replies). In a machine coding round, you must handle **rendering**, **indentation**, and **state updates** (like adding a reply) within a deeply nested structure.
+
+---
+
+### 1. The Data Structure
+The most efficient way to represent this is a tree. Each comment object contains an array of its children.
+
+```javascript
+const commentData = [
+  {
+    id: 1,
+    text: "How does recursion work?",
+    replies: [
+      {
+        id: 2,
+        text: "It is a function that calls itself.",
+        replies: [
+          { id: 3, text: "Until it reaches a base case!", replies: [] }
+        ]
+      }
+    ]
+  },
+  {
+    id: 4,
+    text: "This is a top-level comment",
+    replies: []
+  }
+];
+```
+
+---
+
+### 2. Machine Coding Implementation
+
+#### A. The Recursive Component
+**Mechanics:** The component renders its own content, then maps through its `replies` and renders **itself** for each reply.
+
+```jsx
+import React, { useState } from 'react';
+
+const CommentItem = ({ comment, onAddReply }) => {
+  const [showReplyInput, setShowReplyInput] = useState(false);
+  const [replyText, setReplyText] = useState('');
+
+  const handleReply = () => {
+    onAddReply(comment.id, replyText);
+    setReplyText('');
+    setShowReplyInput(false);
+  };
+
+  return (
+    <div className="mt-4 border-l-2 border-gray-200 pl-4">
+      <div className="bg-gray-50 p-3 rounded">
+        <p className="text-sm">{comment.text}</p>
+        <button 
+          onClick={() => setShowReplyInput(!showReplyInput)}
+          className="text-xs text-blue-500 mt-2"
+        >
+          Reply
+        </button>
+      </div>
+
+      {showReplyInput && (
+        <div className="mt-2 flex gap-2">
+          <input 
+            className="border p-1 text-sm rounded"
+            value={replyText}
+            onChange={(e) => setReplyText(e.target.value)}
+          />
+          <button onClick={handleReply} className="bg-blue-500 text-white px-2 py-1 text-xs rounded">
+            Post
+          </button>
+        </div>
+      )}
+
+      {/* RECURSION HAPPENS HERE */}
+      {comment.replies.length > 0 && (
+        <div className="ml-4">
+          {comment.replies.map((reply) => (
+            <CommentItem 
+              key={reply.id} 
+              comment={reply} 
+              onAddReply={onAddReply} 
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default function CommentSystem() {
+  const [comments, setComments] = useState(commentData);
+
+  // SDE 2 Logic: Immutable Deep Update
+  const addReply = (targetId, text) => {
+    const newReply = { id: Date.now(), text, replies: [] };
+    
+    const updateComments = (list) => {
+      return list.map(comment => {
+        if (comment.id === targetId) {
+          return { ...comment, replies: [...comment.replies, newReply] };
+        }
+        if (comment.replies.length > 0) {
+          return { ...comment, replies: updateComments(comment.replies) };
+        }
+        return comment;
+      });
+    };
+
+    setComments(updateComments(comments));
+  };
+
+  return (
+    <div className="p-10 max-w-2xl">
+      <h2 className="text-xl font-bold mb-4">Comments</h2>
+      {comments.map(c => (
+        <CommentItem key={c.id} comment={c} onAddReply={addReply} />
+      ))}
+    </div>
+  );
+}
+```
+
+---
+
+### 3. SDE 2 Deep Dive: The Mechanics
+
+#### A. The "Base Case"
+In a recursive component, the **Base Case** is essential to prevent infinite loops.
+- **In the code:** The base case is `{comment.replies.length > 0 && (...)`. If a comment has no replies, the recursion stops naturally.
+
+#### B. Depth vs. Performance
+As an SDE 2, you should mention the **Re-rendering** problem.
+- In a deep tree, if you update a comment at level 10, React will theoretically re-render the entire tree from the root down.
+- **Optimization:** Use `React.memo` on the `CommentItem`. This ensures that only the specific branch being updated actually re-renders.
+
+#### C. Data Normalization (Real-world SDE 2 Strategy)
+For very large nested systems (like Reddit), keeping the data in a **Deep Tree** in state is a nightmare for updates.
+- **Better Approach:** Normalize the data into a flat object where keys are IDs.
+```javascript
+{
+  "1": { id: 1, text: "...", children: [2, 4] },
+  "2": { id: 2, text: "...", children: [3] }
+}
+```
+- During render, you use a selector to build the tree or look up children by ID. This makes adding/deleting a comment an $O(1)$ operation instead of an $O(N)$ tree search.
+
+---
+
+### 4. UI/UX Considerations
+- **Visual Nesting:** Use `border-left` and `padding-left` to give a visual "thread" indicator.
+- **Collapsing:** SDE 2s often add a "Collapse" feature. This is done by adding a `isCollapsed` boolean to the local state of the `CommentItem`. If `true`, you simply don't render the recursive `replies` block.
+
+### Summary for Machine Coding Round
+1.  **Component Logic:** Create a component that calls itself.
+2.  **State Logic:** Use a recursive function to find the target ID and immutably update the tree.
+3.  **Visuals:** Use CSS to indent children.
+4.  **Optimization:** Mention `React.memo` and **Normalization** for extra points.

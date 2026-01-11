@@ -1,0 +1,97 @@
+---
+title: Multi-Stage Docker Builds
+description: Learn how multi-stage builds reduce Docker image size and improve security and performance
+order: 83
+---
+
+To an SDE 2, **Multi-stage builds** are the primary pattern for **Artifact Isolation** and **Production Hardening**. 
+
+It allows you to use multiple `FROM` instructions in a single Dockerfile, where each stage is a fresh, temporary container. The goal is to separate the **Build-time Environment** (which needs compilers, build tools, and source code) from the **Runtime Environment** (which only needs the final binary or transpiled code).
+
+---
+
+### 1. The Under-the-Hood Mechanic: Disposable Stages
+**The SDE 2 View:** Docker treats each stage as a temporary **Build Context**. Once the build is finished, Docker discards the "Builder" stages and only saves the **Final** stage as the actual image.
+
+**Mechanics:**
+- **Isolation:** Filesystems of different stages are completely isolated.
+- **The Bridge:** The `COPY --from=<name>` instruction is the only way to move data across this isolation boundary.
+- **Cache Persistence:** Build servers (CI/CD) can cache the builder stage separately to speed up future runs, but that stage is never pushed to the production **Container Registry**.
+
+---
+
+### 2. Machine Coding Example (TypeScript/Node.js)
+
+```dockerfile
+# --- Stage 1: The Builder (Heavyweight) ---
+# This stage contains the full Node.js dev environment + C++ build tools
+FROM node:20-slim AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+# Generates a 'dist' folder with plain JavaScript
+RUN npm run build 
+
+# --- Stage 2: The Production Runtime (Lightweight) ---
+# We use 'alpine' to minimize the OS footprint
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+# 1. Copy only the compiled code from the builder
+COPY --from=builder /app/dist ./dist
+
+# 2. Copy only the production-ready package.json
+COPY --from=builder /app/package.json ./package.json
+
+# 3. Install only production dependencies (no devDependencies)
+RUN npm install --production
+
+USER node
+ENTRYPOINT ["node", "dist/index.js"]
+```
+
+---
+
+### 3. SDE 2 Deep Dive: The Three Pillars of Value
+
+#### A. Attack Surface Reduction (Security)
+In the example above, the `builder` stage might include `curl`, `python`, `gcc`, and your `.git` folder. 
+- If a hacker compromises your container in production, they will look for these tools to perform **Lateral Movement** (scanning your internal network). 
+- In a multi-stage build, those tools **do not exist** in the final image. You have effectively "shaved off" the attack surface.
+
+#### B. Image Bloat & Registry Latency
+- **Without Multi-stage:** A Node.js image with source and `devDependencies` is typically **800MB - 1GB**.
+- **With Multi-stage:** The final image is often **100MB - 150MB**.
+- **SDE 2 Impact:** Smaller images mean faster **Pull Times** during auto-scaling events in Kubernetes, reducing the **Mean Time to Recovery (MTTR)**.
+
+#### C. Secret Protection
+If you need an `.npmrc` file with a private token to download internal packages:
+1.  `COPY` the `.npmrc` into the `builder` stage.
+2.  `RUN npm install`.
+3.  **Do NOT** copy the `.npmrc` into the `runner` stage.
+- **Result:** The secret is present in the build history of your CI machine, but it is **physically absent** from the production image.
+
+---
+
+### 4. Advanced: Using `scratch` or `distroless`
+For compiled languages like Go, Rust, or C++, an SDE 2 might use a **Static Binary** approach.
+
+**The Mechanics:**
+1.  Build the binary in the first stage.
+2.  In the second stage, use `FROM scratch` (an empty 0MB image).
+3.  Copy only the binary.
+- **Result:** A production image that contains **exactly one file** and no Operating System at all. This is the ultimate peak of container security.
+
+---
+
+### 5. SDE 2 Summary Checklist
+1.  **Named Stages:** Always use `AS <name>` for readability instead of index numbers (`--from=0`).
+2.  **Separate Install:** Install `production` dependencies in the final stage to avoid carrying over `devDependencies` (like TypeScript or Testing frameworks).
+3.  **Cross-Platform:** Multi-stage builds make your CI/CD platform-agnostic; the "build instructions" are inside the Dockerfile, not a Jenkins/GitHub Actions script.
+4.  **Chown:** When copying from a builder, remember to maintain file ownership: `COPY --from=builder --chown=node:node ...`.
+
+### Summary
+*   **Junior view:** It’s a way to keep the Dockerfile in one file.
+*   **SDE 2 view:** It is an **Architectural Firewall** that separates the **Build-time Build Context** from the **Production Runtime**, ensuring minimal **Image Payload**, maximum **Security Isolation**, and clean **Artifact Management**.

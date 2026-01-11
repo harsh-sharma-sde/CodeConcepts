@@ -1,0 +1,88 @@
+---
+title: Buffers
+description: Understand buffers, how they work in frontend and backend systems, and their role in performance, streaming, and networking
+order: 73
+---
+
+To an SDE 2, a **Buffer** is a fixed-size chunk of **raw memory** allocated outside the V8 heap. While JavaScript usually manages memory automatically, Buffers allow us to interact directly with **binary data** (streams, TCP packets, file systems, and image processing) without the performance overhead of UTF-16 string conversion.
+
+---
+
+### 1. The Under-the-Hood Mechanic: Off-Heap Memory
+**The SDE 2 View:** In Node.js, the `Buffer` class is implemented in C++. When you create a Buffer, the memory is allocated in the **System Memory (RAM)**, not the V8 JavaScript heap.
+
+**Why?**
+1.  **V8 Heap Limits:** JS objects are limited by the V8 heap size (usually ~1.5GB). Buffers can be much larger.
+2.  **Zero-copy I/O:** When Node.js reads from a socket or disk, it can write data directly into a Buffer. If we used JS strings, the engine would have to copy and convert that binary data into UTF-16, which is CPU-expensive.
+
+---
+
+### 2. Node.js `Buffer`: The "Unsafe" Optimization
+As an SDE 2, you must know the difference between `alloc` and `allocUnsafe`.
+
+*   **`Buffer.alloc(size)`:** Allocates memory and **fills it with zeros**. This is safe but slower because every byte must be written to.
+*   **`Buffer.allocUnsafe(size)`:** Allocates memory **without clearing it**. It may contain "dirty" sensitive data from a previous allocation. It is significantly faster because it skips the zero-filling step.
+
+```javascript
+// ✅ Safe: Memory is cleaned
+const safeBuf = Buffer.alloc(10); 
+
+// 🚀 Fast: Memory is NOT cleaned (SDE 2 choice for performance)
+const unsafeBuf = Buffer.allocUnsafe(10); 
+console.log(unsafeBuf); // Might show random hex values from previous use
+
+// Usage: Convert string to binary (UTF-8)
+const buf = Buffer.from('SDE 2');
+console.log(buf); // <Buffer 53 44 45 20 32>
+console.log(buf.toJSON()); // { type: 'Buffer', data: [ 83, 68, 69, 32, 50 ] }
+```
+
+---
+
+### 3. The Browser: `ArrayBuffer` and `TypedArray`
+In the browser, "Buffer" logic is split into two parts to provide security and type safety.
+
+1.  **`ArrayBuffer`:** The raw data container. It represents a fixed-length binary data buffer. You cannot manipulate it directly.
+2.  **`TypedArray` (View):** A "lens" used to read/write the `ArrayBuffer`. Examples: `Uint8Array`, `Int32Array`, `Float64Array`.
+
+```javascript
+// 1. Allocate 8 bytes of raw memory
+const buffer = new ArrayBuffer(8); 
+
+// 2. Create a "View" to treat the memory as 8-bit unsigned integers
+const view = new Uint8Array(buffer);
+
+view[0] = 255; 
+console.log(view); // Uint8Array(8) [ 255, 0, 0, 0, 0, 0, 0, 0 ]
+```
+
+---
+
+### 4. SDE 2 Deep Dive: Slab Allocation
+To prevent memory fragmentation, Node.js uses a technique called **Slab Allocation** for small Buffers (smaller than 4KB).
+
+**The Mechanics:**
+- Node.js pre-allocates a large "Slab" (usually 8KB).
+- When you request a small Buffer (e.g., 512 bytes), Node doesn't ask the OS for memory. It gives you a **pointer** to a sub-slice of that pre-allocated slab.
+- This reduces the number of expensive system calls to the OS kernel.
+
+---
+
+### 5. String vs. Buffer Performance
+**The SDE 2 View:** Strings in JS are immutable and encoded in UTF-16 (2 bytes per character). Binary data is often 1 byte per unit.
+
+**The Comparison:**
+- **String:** Every time you append to a string, the engine creates a *new* string and copies the old one. This leads to $O(N^2)$ complexity and heavy Garbage Collection pressure.
+- **Buffer:** You can mutate a Buffer in-place. This is $O(1)$ for updates and doesn't trigger Garbage Collection until the entire Buffer is de-referenced.
+
+---
+
+### 6. SDE 2 Use Cases
+1.  **Image Processing:** Resizing or cropping an image requires manipulating individual pixel values (RGBA).
+2.  **Protocol Parsing:** Implementing a custom TCP protocol where the first 4 bytes are the header length.
+3.  **Cryptography:** Hashing and encryption algorithms (like SHA-256) operate strictly on byte arrays.
+4.  **File Compression:** Gzip/Brotli works by finding patterns in raw bytes.
+
+### Summary
+*   **Junior view:** It's a way to store binary data.
+*   **SDE 2 view:** It is **Fixed-size, Off-heap Memory** that bypasses the **UTF-16 String overhead**. We use **TypedArray Views** in the browser and **Slab-allocated Buffers** in Node.js to perform high-performance, **Zero-copy I/O** and complex binary manipulation without triggering the **V8 Garbage Collector**.

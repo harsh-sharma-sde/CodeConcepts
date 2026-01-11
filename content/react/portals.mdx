@@ -1,0 +1,87 @@
+---
+title: React Portals
+description: Understand how React Portals work, why they are needed, and common real-world use cases
+order: 23
+---
+
+To an SDE 2, a **Portal** is a mechanism for **decoupling the DOM hierarchy from the React component hierarchy**. 
+
+While a component’s output is usually nested physically within its parent's DOM node, a Portal allows you to "teleport" a subtree to a different part of the actual DOM while maintaining its logical position in the **Fiber Tree**.
+
+---
+
+### 1. The "Why": Breaking the Stacking Context
+In CSS, certain properties like `overflow: hidden`, `z-index`, or `transform` create a **Stacking Context**. If a parent has `overflow: hidden`, a child (like a Modal or Tooltip) will be clipped, no matter how high its `z-index` is.
+
+**The SDE 2 Solution:** Use a Portal to render the Modal at the bottom of `<body>`, effectively breaking out of the parent's CSS constraints while still allowing the parent to control the Modal's state via props.
+
+---
+
+### 2. Under the Hood: Fiber Reconciliation
+The most critical SDE 2 insight is that **React's internal tree (Fiber) does not change.**
+
+1.  **Reconciliation:** During the render phase, React sees a `Portal` type. It continues its recursive (linked-list) traversal of children just like a normal component.
+2.  **Commit Phase:** When React reaches the "Commit" phase (applying changes to the DOM), it uses the `container` argument you provided to `createPortal` as the insertion point instead of the parent's DOM node.
+3.  **Context & State:** Since the Fiber tree remains intact, **Context** and **State** flow through the Portal perfectly. A `useContext` call inside a Portal will correctly find a Provider located high up in the main application tree.
+
+---
+
+### 3. The "Synthetic Event" Bubble
+A common interview question: "If I click a button inside a Portal, will an `onClick` handler on a parent (outside the portal) fire?"
+
+**The Answer: Yes.** 
+React uses a **Synthetic Event System**. Events don't bubble through the native browser DOM only; React intercepts the event and manually bubbles it up through the **Fiber Tree**. Because the Portal is still a child in the Fiber Tree, the event "bubbles" to the parent, even if they are miles apart in the actual HTML.
+
+---
+
+### 4. Code Example: The Modal Pattern
+
+```javascript
+import ReactDOM from 'react-dom';
+
+const Modal = ({ isOpen, children, onClose }) => {
+  if (!isOpen) return null;
+
+  // We are rendering 'children' into 'document.body' 
+  // or a specific #modal-root element
+  return ReactDOM.createPortal(
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content" onClick={e => e.stopPropagation()}>
+        {children}
+        <button onClick={onClose}>Close</button>
+      </div>
+    </div>,
+    document.body // The target DOM node
+  );
+};
+
+// Usage
+function App() {
+  return (
+    <div className="parent-with-clipping" style={{ overflow: 'hidden' }}>
+      <h1>My App</h1>
+      <Modal isOpen={true} onClose={() => console.log('closed')}>
+        <p>I am inside a portal, so I won't be clipped!</p>
+      </Modal>
+    </div>
+  );
+}
+```
+
+---
+
+### 5. SDE 2 Deep Dive: Accessibility (A11y)
+As an SDE 2, you must consider the side effects of Portals on **Accessibility**.
+- **Keyboard Navigation:** Screen readers and "Tab" key navigation follow the **DOM order**, not the React tree order.
+- **Problem:** If you portal a Modal to the end of the body, a user tabbing through the app might "jump" from the top of the page straight into the modal at the bottom, or worse, lose focus entirely.
+- **Requirement:** When using Portals for UI components like Modals, you must implement **Focus Trapping** (ensuring the Tab key only cycles through elements inside the portal while it is open).
+
+---
+
+### 6. Performance Considerations
+Creating and destroying Portals is relatively cheap, but frequent mounting/unmounting of the portal container can cause **Layout Thrashing**. 
+- **Best Practice:** Maintain a stable DOM node for your portal target (like a `<div id="portal-root"></div>` in your `index.html`) rather than creating a new `div` in every render.
+
+### Summary
+*   **Junior view:** It’s a way to put a Modal at the end of the HTML.
+*   **SDE 2 view:** It is a **DOM-decoupling pattern** that leverages the **Synthetic Event System** to maintain event bubbling and Context propagation through the **Fiber Tree**, regardless of the physical location of the nodes in the browser's DOM tree.

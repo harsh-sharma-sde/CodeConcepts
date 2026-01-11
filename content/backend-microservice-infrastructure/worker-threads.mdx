@@ -1,0 +1,106 @@
+---
+title: Worker Threads
+description: Understand Worker Threads, how they work in browsers and Node.js, and how they improve performance and responsiveness
+order: 74
+---
+
+To an SDE 2, **Worker Threads** represent the transition from **Concurrency** (Event Loop) to true **Parallelism** (Multi-core execution) within a single process. 
+
+While the standard Node.js Event Loop is great for I/O, it is "Single-Threaded." If you perform a heavy computation (like image processing or complex sorting) on the main thread, you block the Event Loop, causing the entire server to hang. Worker Threads allow you to offload these **CPU-intensive tasks** to separate threads.
+
+---
+
+### 1. The Under-the-Hood Mechanic: V8 Isolates
+**The SDE 2 View:** Every Worker Thread runs in its own **V8 Isolate**. 
+
+An **Isolate** is an independent instance of the V8 engine, complete with its own:
+- **Heap memory** (where objects live).
+- **Call stack**.
+- **Event Loop**.
+
+**Mechanics:**
+Unlike `child_process` (which spawns a full OS process with its own memory overhead), Worker Threads share the same **Process ID (PID)** and the same **Binary** as the main thread. This makes them significantly lighter and faster to spawn.
+
+---
+
+### 2. Communication: Message Passing vs. Shared Memory
+As an SDE 2, you must understand the two ways threads talk to each other:
+
+#### A. Message Passing (Default)
+When you use `parentPort.postMessage(data)`, Node.js uses the **Structured Clone Algorithm**. 
+- **Mechanics:** The data is **serialized** on the sending thread and **deserialized** on the receiving thread. 
+- **Cost:** For large objects, this creates a CPU overhead. The threads do not share the actual memory address of the object.
+
+#### B. Shared Memory (`SharedArrayBuffer`)
+This is the "Pro" SDE 2 path. You can pass a `SharedArrayBuffer` between threads.
+- **Mechanics:** Both threads point to the **exact same physical memory address**. There is zero serialization cost.
+- **The Risk:** This introduces **Race Conditions**. You must use the **Atomics API** to ensure that two threads don't write to the same byte simultaneously.
+
+---
+
+### 3. Machine Coding Example (Node.js)
+
+```javascript
+const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
+
+if (isMainThread) {
+  // --- Main Thread Logic ---
+  console.log('Main: Starting a heavy task...');
+
+  const worker = new Worker(__filename, {
+    workerData: { num: 40 } // Pass data to the worker
+  });
+
+  worker.on('message', (result) => {
+    console.log(`Main: The result is ${result}`);
+  });
+
+  worker.on('error', console.error);
+  
+  console.log('Main: I am not blocked! I can still handle other requests.');
+
+} else {
+  // --- Worker Thread Logic ---
+  // Each worker has its own V8 Isolate and Event Loop
+  const fibonacci = (n) => {
+    if (n <= 1) return n;
+    return fibonacci(n - 1) + fibonacci(n - 2);
+  };
+
+  const result = fibonacci(workerData.num);
+  parentPort.postMessage(result); // Send result back to main
+}
+```
+
+---
+
+### 4. SDE 2 Deep Dive: Worker Thread Pool
+As an SDE 2, you never spawn a new Worker Thread per request. Spawning a thread still takes ~10-50ms and consumes ~20MB of memory.
+
+**The Strategy:** Use a **Worker Pool** (like `piscina`). 
+1. Pre-warm a fixed number of threads (usually equal to the number of CPU cores).
+2. Maintain a task queue.
+3. Assign tasks to idle workers. 
+4. This keeps the **Latency** low and prevents **Memory Exhaustion**.
+
+---
+
+### 5. Threading Model Comparison
+
+| Feature | Child Process | Worker Thread |
+| :--- | :--- | :--- |
+| **Isolation** | High (Separate OS Process) | Medium (Separate V8 Isolate) |
+| **Memory Cost** | High (~30-50MB base) | Low (~10-20MB base) |
+| **Communication** | IPC (Serialization) | MessagePort (Serialization) or SharedArrayBuffer (Shared) |
+| **Best Use Case** | Running separate CLI tools or Python scripts. | Heavy JS-based computation (Crypto, Image processing). |
+
+---
+
+### 6. SDE 2 Checklist: When to use?
+1.  **CPU Bound?** Yes (Worker Threads).
+2.  **I/O Bound?** No. Use the standard Event Loop (`async/await`). The Event Loop is actually faster at I/O than threads because it doesn't have the context-switching overhead.
+3.  **Data size?** If passing 100MB of data, use `SharedArrayBuffer` or `Transferable Objects` to avoid the serialization bottleneck.
+
+### Summary
+*   **Junior view:** It's a way to do multi-threading in Node.js.
+*   **SDE 2 view:** It is a **Multi-Isolate Architecture** that allows for **Parallel CPU Execution** within a single process. We optimize it using **Thread Pools** to avoid spawn overhead and **SharedArrayBuffers** with **Atomics** to eliminate data serialization costs during high-throughput tasks.

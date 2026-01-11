@@ -1,0 +1,120 @@
+---
+title: Question 26 (DSA)
+description: Learn how to find the lowest common ancestor (LCA) of two elements in a DOM tree efficiently
+order: 98
+---
+
+Finding the Lowest Common Ancestor (LCA) in a DOM tree is slightly different from a binary tree because nodes in the DOM have a `parentNode` property, allowing us to traverse **upwards**.
+
+Here are the three best ways to implement this.
+
+---
+
+### 1. The Iterative "Set" Approach (Most Common)
+This is the most intuitive approach. We trace the path from the first element up to the root and store the ancestors in a `Set`. Then, we trace up from the second element and the first ancestor we encounter that exists in the Set is our LCA.
+
+```javascript
+function findLCA(node1, node2) {
+  const ancestors = new Set();
+
+  // Walk up from node1 to the root (html/document)
+  let curr1 = node1;
+  while (curr1) {
+    ancestors.add(curr1);
+    curr1 = curr1.parentNode;
+  }
+
+  // Walk up from node2 and find the first match
+  let curr2 = node2;
+  while (curr2) {
+    if (ancestors.has(curr2)) {
+      return curr2;
+    }
+    curr2 = curr2.parentNode;
+  }
+
+  return null; // Should not happen if both are in the same document
+}
+```
+*   **Time Complexity:** $O(D)$ where $D$ is the depth of the tree.
+*   **Space Complexity:** $O(D)$ to store the ancestors.
+
+---
+
+### 2. Using `Node.contains()` (Most Concise)
+The DOM API provides a `contains()` method. We can simply start at `node1` and move up the tree until we find a node that also contains `node2`.
+
+```javascript
+function findLCA(node1, node2) {
+  let curr = node1;
+  while (curr) {
+    if (curr.contains(node2)) {
+      return curr;
+    }
+    curr = curr.parentNode;
+  }
+  return null;
+}
+```
+*   **Pros:** Very readable and uses native APIs.
+*   **Cons:** Theoretically slower ($O(D^2)$ in the worst case) because `contains()` potentially traverses subtrees, though browsers optimize this heavily.
+
+---
+
+### 3. The Native "Range" API (The Pro Way)
+Modern browsers have a built-in `Range` API designed specifically for handling fragments of the document. A `Range` object automatically calculates its own common ancestor.
+
+```javascript
+function findLCA(node1, node2) {
+  const range = document.createRange();
+  
+  // We don't care about the order of nodes for LCA
+  // But Range requires the start to be before the end in the document
+  if (node1.compareDocumentPosition(node2) & Node.DOCUMENT_POSITION_FOLLOWING) {
+    range.setStart(node1, 0);
+    range.setEnd(node2, 0);
+  } else {
+    range.setStart(node2, 0);
+    range.setEnd(node1, 0);
+  }
+
+  return range.commonAncestorContainer;
+}
+```
+*   **Pros:** Uses highly optimized C++ code internal to the browser.
+*   **Cons:** Slightly more complex syntax; requires checking the document position of nodes first.
+
+---
+
+### 4. The Recursive Approach (No `parentNode`)
+If this were a coding interview where you are **not** allowed to use `.parentNode` (simulating a standard N-ary tree), you would use a recursive top-down approach:
+
+```javascript
+function findLCA(root, node1, node2) {
+  if (!root || root === node1 || root === node2) {
+    return root;
+  }
+
+  let count = 0;
+  let res = null;
+
+  for (let child of root.children) {
+    const found = findLCA(child, node1, node2);
+    if (found) {
+      count++;
+      res = found;
+    }
+  }
+
+  // If node1 and node2 were found in different subtrees of the current root
+  if (count === 2) {
+    return root;
+  }
+
+  return res;
+}
+```
+
+### Which one should I use?
+1.  **In a real project:** Use **Method 2 (`contains`)** or **Method 3 (`Range`)**. They are fast and leverage built-in browser behavior.
+2.  **In a coding interview:** Use **Method 1 (Set)**. It demonstrates an understanding of time/space complexity and DOM traversal without relying on "magic" native APIs like `Range`.

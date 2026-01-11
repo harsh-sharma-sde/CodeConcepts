@@ -1,0 +1,81 @@
+---
+title: HTTP/2 vs HTTP/3
+description: Understand the differences between HTTP/2 and HTTP/3, their performance characteristics, and when to use each
+order: 66
+---
+
+To an SDE 2, the transition from **HTTP/2** to **HTTP/3** is a fundamental shift in the **Transport Layer** (OSI Layer 4) logic, moving from **TCP** to **UDP (QUIC)** to solve the "Head-of-Line Blocking" problem that has plagued the web for 30 years.
+
+---
+
+### 1. HTTP/2: The Binary Multiplexer
+**The SDE 2 View:** HTTP/2 introduced the **Binary Framing Layer**. Instead of text-based requests, it breaks messages into binary frames and interleaves them over a **single TCP connection**.
+
+**Mechanics:**
+- **Multiplexing:** You can send 100 images over one connection simultaneously. The browser doesn't have to open 6 separate TCP sockets (as in HTTP/1.1).
+- **Header Compression (HPACK):** Uses a static/dynamic dictionary to avoid sending repetitive headers (like `User-Agent`) over and over.
+
+#### The "Head-of-Line (HOL) Blocking" Problem:
+Despite multiplexing, HTTP/2 lives on **TCP**. TCP is a "reliable" stream. If **one packet** of **one image** is lost in transit, the TCP stack stops **all** other packets (even for different images) until that missing packet is retransmitted. 
+*   *SDE 2 Summary:* One lost packet in one stream stalls the entire pipe.
+
+---
+
+### 2. HTTP/3: The QUIC Revolution
+**The SDE 2 View:** HTTP/3 replaces TCP with **QUIC (Quick UDP Internet Connections)**. It moves the "Reliability" and "Ordering" logic from the Operating System's Kernel (TCP) to the **Application Layer (UDP)**.
+
+**Mechanics:**
+- **Stream-level Multiplexing:** In QUIC, each stream is independent. If a packet for Image A is lost, the browser continues processing packets for Image B and C. There is **zero blocking** between streams.
+- **0-RTT Handshake:** TCP requires a 3-way handshake + a TLS handshake (2-3 round trips). QUIC combines the transport and security handshake into **one round trip**. For repeat visitors, it's **zero round trips (0-RTT)**.
+
+---
+
+### 3. SDE 2 Comparison: The Technical Specs
+
+| Feature | HTTP/2 | HTTP/3 |
+| :--- | :--- | :--- |
+| **Protocol** | TCP + TLS 1.2/1.3 | **UDP + QUIC** (built-in TLS 1.3) |
+| **Multiplexing** | Yes (At HTTP layer) | **Yes (At Transport layer)** |
+| **HOL Blocking** | Yes (At TCP layer) | **No** |
+| **Handshake** | 2-3 Round Trips | **0-1 Round Trip** |
+| **Connection ID** | IP/Port based | **Unique CID** (Connection remains alive even if you switch from Wi-Fi to 5G) |
+
+---
+
+### 4. Code / Config: Enabling the Protocol
+As an SDE 2, you don't "write" HTTP/3; you enable it on your **Load Balancer** or **Reverse Proxy**.
+
+#### Nginx Configuration (Draft)
+```nginx
+server {
+    # Listen on UDP for HTTP/3
+    listen 443 quic reuseport;
+    
+    # Listen on TCP for HTTP/2 (Fallback)
+    listen 443 ssl http2;
+
+    # Advertise HTTP/3 availability to the browser
+    # The browser sees this header and switches to UDP for future requests
+    add_header Alt-Svc 'h3=":443"; ma=86400';
+
+    ssl_protocols TLSv1.3; # QUIC requires TLS 1.3
+}
+```
+
+---
+
+### 5. SDE 2 Deep Dive: Connection Migration
+One of the most powerful features of HTTP/3 is its handling of **Mobile Users**.
+- **TCP (HTTP/2):** The connection is tied to the **IP/Port 4-tuple**. If you walk out of your house and switch from Wi-Fi to 4G, your IP changes. The TCP connection **breaks**, and all downloads must restart.
+- **QUIC (HTTP/3):** Uses a **Connection ID**. Even if your IP changes, the CID remains the same. The server recognizes the CID and continues the download without a single dropped packet.
+
+---
+
+### 6. When to be cautious with HTTP/3?
+As an SDE 2, you must know your network environment:
+1.  **UDP Blocking:** Some corporate firewalls block UDP port 443 (thinking it's used for malware/VPNs). This is why we always keep **HTTP/2 (TCP)** as a fallback.
+2.  **CPU Usage:** QUIC is currently more CPU-intensive than TCP because it's handled in "user space" rather than the "kernel." If your server is already at 90% CPU, enabling HTTP/3 might push it over the edge.
+
+### Summary
+*   **Junior view:** HTTP/3 is the new version of the internet that makes things faster.
+*   **SDE 2 view:** HTTP/3 is a shift to **UDP-based QUIC** that eliminates **TCP Head-of-Line Blocking**, drastically reduces **Handshake Latency**, and enables **Seamless Connection Migration** for mobile devices by moving network reliability logic to the **Application Layer**.

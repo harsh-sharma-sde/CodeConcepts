@@ -1,0 +1,107 @@
+---
+title: Question 6 (React & Next)
+description: Understand when and why to use `useMemo` and `useCallback`, including trade-offs and performance considerations
+order: 31
+---
+
+To an SDE 2, `useMemo` and `useCallback` are tools for **Referential Stability**. They are used to prevent the downstream effects of JavaScript's **Equality Comparison (`Object.is`)**.
+
+While they look like performance tools, using them everywhere is actually a **Memory vs. CPU trade-off**.
+
+---
+
+### 1. The Core Difference
+Internally, both hooks work by storing data on the **Fiber node's `memoizedState` linked list**.
+
+*   **`useMemo`**: Executes the function and caches the **result** of that function. Use it to cache an expensive calculation or an object/array.
+*   **`useCallback`**: Caches the **function instance itself**. Use it to ensure that a function passed to a child doesn't change its memory address on every render.
+
+**The SDE 2 secret:** `useCallback(fn, deps)` is literally just sugar for `useMemo(() => fn, deps)`.
+
+---
+
+### 2. When to use which?
+
+#### Case A: `useMemo` for Computation or Identity
+Use it when you have an $O(n^2)$ operation, or when you are creating a new object/array that is used as a dependency in another hook.
+
+```javascript
+// Without useMemo, 'filteredList' is a new memory address every render
+const filteredList = useMemo(() => {
+    return items.filter(item => item.price > threshold); // Expensive O(n)
+}, [items, threshold]); 
+
+// This useEffect only fires when the actual CONTENT of the list changes
+useEffect(() => {
+    console.log("List changed");
+}, [filteredList]); 
+```
+
+#### Case B: `useCallback` for Child Component Stability
+Use it when passing a function to a child component that is wrapped in `React.memo`. If you don't use `useCallback`, the child will re-render every time the parent does, because a "new" function was created.
+
+```javascript
+const Parent = () => {
+    const [count, setCount] = useState(0);
+
+    // memoizedState stores this specific function pointer
+    const handleAction = useCallback(() => {
+        console.log("Action triggered");
+    }, []); 
+
+    return <ExpensiveChild onAction={handleAction} />;
+};
+
+const ExpensiveChild = React.memo(({ onAction }) => {
+    console.log("Child rendered"); // Only renders once
+    return <button onClick={onAction}>Click</button>;
+});
+```
+
+---
+
+### 3. Under the Hood: The Cost of Memoization
+As an SDE 2, you must realize that memoization is **not free**. It is a trade-off: **you are trading Memory for CPU.**
+
+#### The Memory Cost (Heap)
+Every time you use these hooks, React has to:
+1.  Allocate memory in the **Heap** to store the value/function.
+2.  Allocate memory to store the **Dependency Array**.
+3.  Store a pointer to the previous version in the Fiber's linked list.
+
+#### The Computation Cost (CPU)
+On **every single render**, React must iterate through the dependency array and perform a shallow comparison (`Object.is`) for every item.
+- If your "expensive" calculation is just `a + b`, the cost of the dependency check is actually **higher** than the cost of just doing the math again.
+
+#### The Garbage Collection (GC) Cost
+Functions inside `useCallback` create **Closures**. These closures can prevent variables in the outer scope from being garbage collected as long as the memoized function exists in memory. This can lead to subtle memory leaks in large-scale applications.
+
+---
+
+### 4. SDE 2 Decision Matrix: To Memoize or Not?
+
+| Scenario | Use `useMemo` / `useCallback`? | Reason |
+| :--- | :--- | :--- |
+| **Simple Primitives** | No | `Object.is` check is as expensive as the variable itself. |
+| **Filtering/Sorting < 100 items** | No | Modern V8 engines handle small loops faster than React handles hooks. |
+| **Object passed to `useEffect` deps** | **Yes** | Prevents infinite loops or unnecessary effect triggers. |
+| **Prop passed to `React.memo` child** | **Yes** | This is the primary reason for `useCallback`. |
+| **Heavy JSON transformation** | **Yes** | Saves CPU cycles in the render phase. |
+
+---
+
+### 5. Pro Tip: The "Default" Anti-pattern
+Many developers think: *"Why not just wrap everything in `useCallback` just in case?"*
+
+**SDE 2 View:** This is an anti-pattern.
+1. It makes the code harder to read (**Cognitive Load**).
+2. It increases memory pressure.
+3. It makes the dependency array a source of bugs (forgetting a dependency leads to **Stale Closures**).
+
+**Rule of Thumb:** Only optimize when you have a measurable performance issue or a clear requirement for referential integrity.
+
+### Summary
+*   **`useMemo`** caches values; **`useCallback`** caches functions.
+*   Their primary purpose is to maintain **Referential Identity** to satisfy `Object.is` checks in `useEffect` or `React.memo`.
+*   The trade-off is **Heap Memory + Comparison CPU cycles** vs. **Re-execution CPU cycles**.
+*   In many cases (simple logic), the cost of the hook exceeds the cost of the re-calculation.

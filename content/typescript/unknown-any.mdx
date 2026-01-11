@@ -1,0 +1,98 @@
+---
+title: TypeScript `unknown` vs `any`
+description: Understand the difference between `unknown` and `any` types in TypeScript for safer type handling
+order: 12
+---
+
+For an SDE 2, the distinction between `any` and `unknown` is about **Type Safety vs. Type Erasure**. Both are "Top Types" (meaning all other types can be assigned to them), but they interact with the **Type Checker** in fundamentally different ways.
+
+---
+
+### 1. `any`: The "Opt-out" Type
+**The SDE 2 View:** `any` is not a type check; it is a **type bypass**. When you use `any`, you are telling the TypeScript compiler to disable static analysis for that variable. It is essentially a "black hole" where the compiler assumes that whatever you do with the variable is correct.
+
+**Mechanics:**
+- It is **Implicitly Castable**: You can assign an `any` to a `string`, `number`, or `boolean` without the compiler complaining. 
+- It is **Viral**: If a function returns `any`, every variable that touches that data eventually becomes `any` or loses its type safety, leading to "runtime surprises."
+
+```typescript
+let value: any = 10;
+
+// No compiler error, but will CRASH at runtime
+value.toUpperCase(); 
+
+// No compiler error, but 'name' is now effectively lying about its type
+let name: string = value; 
+```
+
+---
+
+### 2. `unknown`: The "Safe" Top Type
+**The SDE 2 View:** `unknown` is the type-safe version of `any`. It represents a value that could be anything, but the compiler **refuses to let you use it** until you "prove" what it is.
+
+**Mechanics:**
+- It is **Opaque**: You cannot access properties, call methods, or assign it to other types (except `any` or `unknown`) without first performing **Type Narrowing**.
+- It forces the use of **Control Flow Analysis (CFA)** (like `typeof` or `instanceof`).
+
+```typescript
+let value: unknown = "Hello World";
+
+// value.toUpperCase(); // Error: Object is of type 'unknown'.
+
+if (typeof value === "string") {
+    // Inside this block, 'value' is narrowed to 'string'
+    console.log(value.toUpperCase()); // Success!
+}
+```
+
+---
+
+### 3. SDE 2 Comparison: The "Top Type" Theory
+In Type Theory, `any` and `unknown` are both **Top Types** in the sense that they are at the top of the inheritance tree. However:
+
+| Feature | `any` | `unknown` |
+| :--- | :--- | :--- |
+| **Assign anything TO it?** | Yes | Yes |
+| **Assign it TO anything?** | Yes (The danger zone) | No (The safe zone) |
+| **Access properties?** | Yes (No checks) | No (Requires proof) |
+| **Best Use Case** | Migrating JS to TS / Lazy prototyping | API Responses / 3rd party dynamic data |
+
+---
+
+### 4. Under the Hood: Why SDE 2s Prefer `unknown`
+As an SDE 2, you are often dealing with **boundaries** (Data coming from a JSON API, LocalStorage, or a dynamic library).
+
+**The `any` approach (Risky):**
+If you type an API response as `any`, and the backend changes a field name, your TS code will still compile, but your production app will throw `undefined` errors.
+
+**The `unknown` approach (Defensive):**
+If you type that response as `unknown`, the compiler **forces** you to validate the data before using it. This acts as a "Runtime Schema Validation" gate.
+
+```typescript
+async function fetchData(url: string): Promise<unknown> {
+    const response = await fetch(url);
+    return response.json();
+}
+
+const data = await fetchData("/api/user");
+
+// We are forced to validate the shape
+if (data && typeof data === 'object' && 'id' in data) {
+    console.log("User ID:", (data as {id: number}).id);
+}
+```
+
+---
+
+### 5. Interaction with `never`
+SDE 2s know that `any` and `unknown` are at the **top** of the hierarchy, while `never` is at the **bottom**.
+
+- `any` + `any` = `any`
+- `unknown` + `string` = `unknown` (in a union, the most permissive type wins)
+- `unknown` & `string` = `string` (in an intersection, the most restrictive type wins)
+
+### Summary
+*   **`any`** says: "I don't care about the type; trust me, I'm a programmer." (Compiler: 🤐)
+*   **`unknown`** says: "This could be anything; I don't trust the data yet." (Compiler: 👮‍♂️ "Show me your ID first.")
+
+**SDE 2 Tip:** If you find yourself reaching for `any`, try `unknown` first. It provides the same flexibility for incoming data but maintains the integrity of your internal type system.

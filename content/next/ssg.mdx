@@ -1,0 +1,96 @@
+---
+title: Static Site Generation (SSG)
+description: Understand Static Site Generation, how it works, benefits, limitations, and usage in modern frameworks like Next.js
+order: 25
+---
+
+To an SDE 2, **Static Site Generation (SSG)** is the practice of moving the "Rendering Phase" from **Request Time** (when the user clicks) to **Build Time** (when the CI/CD pipeline runs).
+
+Architecturally, SSG is **"Caching as an Architecture."** Instead of a server calculating the UI for every user, you compute it once, save the result as a physical `.html` file, and distribute it globally via a **Content Delivery Network (CDN)**.
+
+---
+
+### 1. The Build-Time Lifecycle
+In a large-scale system, the SSG process follows these steps:
+1.  **Extraction:** The build script fetches data from a Headless CMS or Database.
+2.  **Compilation:** The engine (Next.js, Hugo, Gatsby) maps data to components.
+3.  **Serialization:** React generates the HTML string and **serializes** the data into a JSON file (to avoid re-fetching on the client).
+4.  **Deployment:** Static files (HTML, JS, CSS, JSON) are pushed to an Edge provider (Vercel, AWS S3/CloudFront).
+
+---
+
+### 2. Simple Code Example (Next.js Pattern)
+
+```javascript
+// pages/blog/[id].js
+
+// 1. Tell the builder which paths to generate (e.g., /blog/1, /blog/2)
+export async function getStaticPaths() {
+  const posts = await supabase.from('posts').select('id');
+  return {
+    paths: posts.map((p) => ({ params: { id: p.id.toString() } })),
+    fallback: 'blocking' // SDE 2 choice: handle new posts on-the-fly
+  };
+}
+
+// 2. Fetch data once during the build process
+export async function getStaticProps({ params }) {
+  const post = await supabase.from('posts').select('*').eq('id', params.id).single();
+
+  return {
+    props: { post },
+    revalidate: 3600 // ISR: Refresh the static file every hour
+  };
+}
+
+// 3. This component is rendered to a static HTML file at build time
+export default function BlogPost({ post }) {
+  return (
+    <article>
+      <h1>{post.title}</h1>
+      <p>{post.content}</p>
+    </article>
+  );
+}
+```
+
+---
+
+### 3. SDE 2 Deep Dive: The Mechanics
+
+#### A. Hydration and the "Double Boot"
+Even though the HTML is static, the application is still a React app. When the browser loads the static HTML:
+1.  The user sees content immediately (Instant **First Contentful Paint**).
+2.  The browser downloads the JS bundle.
+3.  **Hydration:** React boots up, reads the serialized JSON (generated at build time), and attaches event listeners to the existing DOM.
+4.  If the client-side logic modifies the state, the page becomes dynamic.
+
+#### B. The Build Scalability Problem ($O(N)$)
+As an SDE 2, you must recognize that "Pure SSG" does not scale linearly.
+- If you have **1,000,000** e-commerce products, and your build takes 0.1s per page, your build will take **27 hours**.
+- **The Solution:** Use **Incremental Static Regeneration (ISR)**. You pre-render the top 1,000 pages at build time and generate the remaining 999,000 "on-demand" as users request them, caching the result for future users.
+
+#### C. Data Decoupling
+SSG separates the **Availability** of your site from the **Availability** of your database.
+- If your Database goes down in an **SSR** model, your site goes down.
+- If your Database goes down in an **SSG** model, your site stays up because the HTML is already on the CDN. This is a massive win for **Reliability Engineering**.
+
+---
+
+### 4. Comparison: SSG vs. SSR
+
+| Metric | SSR (Server) | SSG (Static) |
+| :--- | :--- | :--- |
+| **Performance** | Variable (depends on DB/Server) | Constant (Edge/CDN speed) |
+| **Data Freshness** | Real-time | Stale (until next build/revalidate) |
+| **Compute Cost** | High (per request) | Low (per build) |
+| **Reliability** | Depends on Backend uptime | Highly Resilient (Static files) |
+
+---
+
+### 5. Architectural Insight: Atomic Deploys
+SSG allows for **Atomic Deploys**. Since the entire site is a folder of static files, "Deploying" is just changing a pointer (symlink) on the CDN to a new folder. This makes **Rollbacks** instantaneous—you just point back to the previous build's folder. There is no "half-deployed" state where some users see old code and others see new code.
+
+### Summary
+*   **Junior view:** It's for blogs and makes the site really fast.
+*   **SDE 2 view:** It is a **Build-time Serialization** strategy that maximizes **Reliability** and **Request Performance** by shifting the cost of rendering from the user's request to the CI/CD pipeline, utilizing **CDN Distribution** to achieve $O(1)$ delivery speeds.

@@ -1,0 +1,116 @@
+---
+title: Render Props
+description: Understand the Render Props pattern in React, how it works, use cases, and comparison with HOCs and Hooks
+order: 21
+---
+
+To an SDE 2, **Render Props** is a pattern that implements **Inversion of Control (IoC)**. It allows a component to encapsulate stateful logic while "delegating" the actual UI rendering to the consumer.
+
+While Hooks have largely replaced Render Props for internal logic, this pattern remains critical for library authors (like **Formik**, **Downshift**, or **React Router**) who need to provide logic and state without dictating the DOM structure.
+
+---
+
+### 1. The Core Mechanic: Delegation
+The fundamental idea is that a component manages data (state, event listeners, etc.) and instead of having its own JSX, it calls a function passed to it via a prop (usually named `render` or using `children` as a function).
+
+**Mechanics:**
+The parent component passes a function. The child component executes that function, passing its internal state as arguments. This allows the parent to decide exactly how that state should be represented in the DOM.
+
+---
+
+### 2. Code Example: Mouse Tracker
+
+```javascript
+// Stateful Logic Component
+class MouseTracker extends React.Component {
+  state = { x: 0, y: 0 };
+
+  handleMouseMove = (event) => {
+    this.setState({ x: event.clientX, y: event.clientY });
+  };
+
+  render() {
+    // We call the 'render' prop and pass the internal state
+    return (
+      <div style={{ height: '100vh' }} onMouseMove={this.handleMouseMove}>
+        {this.prototype.render ? this.props.render(this.state) : this.props.children(this.state)}
+      </div>
+    );
+  }
+}
+
+// Consumer
+const App = () => (
+  <MouseTracker>
+    {({ x, y }) => (
+      <h1>The mouse position is ({x}, {y})</h1>
+    )}
+  </MouseTracker>
+);
+```
+
+---
+
+### 3. SDE 2 Deep Dive: Why not just HOCs?
+
+#### A. Solving Namespace Collisions
+In HOCs, if you wrap a component in two HOCs that both inject a prop called `data`, the second one will overwrite the first. 
+In Render Props, you receive the data as arguments in a function. You can name them whatever you want, completely avoiding collisions.
+
+#### B. Dynamic Composition
+HOCs are **static**. They are created at the module level (outside the render cycle). 
+Render Props are **dynamic**. They happen during the render phase. You can change the rendering logic based on the component's current props or state.
+
+#### C. Traceability
+In an HOC, it's often hard to tell where a prop is coming from (`this.props.user`—did that come from `withAuth` or `withUser`?). With Render Props, the data flow is explicit and visible in the JSX.
+
+---
+
+### 4. Under the Hood: Performance and V8
+As an SDE 2, you must be aware of the **Anonymous Function allocation**.
+
+```javascript
+// Potentially problematic
+<MouseTracker render={props => <MyComponent {...props} />} />
+```
+**Mechanics:** 
+Every time the parent component renders, a **new function object** is created for the `render` prop. 
+- In most cases, this is negligible. 
+- However, if `MouseTracker` is a `PureComponent` or uses `React.memo`, it will **always re-render** because the `render` prop fails the shallow equality check (`prevProps.render !== nextProps.render`).
+
+**Optimization:** Define the render function as a class method or memoize it with `useCallback` to maintain referential identity.
+
+---
+
+### 5. Render Props vs. Hooks
+
+| Feature | Render Props | Hooks |
+| :--- | :--- | :--- |
+| **Logic Reuse** | Excellent | Excellent |
+| **Nesting** | Can lead to "Callback Hell" | Flat structure |
+| **Ref Access** | Easy to pass refs down | Requires `useImperativeHandle` / `forwardRef` |
+| **UI Delegation** | Built for this | Not designed for UI delegation |
+
+**SDE 2 Architectural Rule:**
+- If you need to share **pure logic** (e.g., fetching data, window resize), use **Hooks**.
+- If you need to provide **Logic + A Specific DOM Interaction** (e.g., a Dropdown that handles keyboard navigation and ARIA attributes but lets the user style the list items), use **Render Props**.
+
+### 6. The "Children as a Function" Pattern
+Modern libraries prefer using the `children` prop as a function because it feels more natural in JSX.
+
+```javascript
+// Library Side
+const DataProvider = ({ children }) => {
+    const data = { id: 1, name: "SDE 2" };
+    return children(data);
+}
+
+// Consumer Side
+<DataProvider>
+    {(data) => <div>{data.name}</div>}
+</DataProvider>
+```
+
+### Summary
+*   **Junior view:** It's a function that returns JSX.
+*   **SDE 2 view:** It is a **Pattern for Inversion of Control** that facilitates dynamic composition and solves the **Namespace Collision** and **Prop Traceability** issues of HOCs, though it requires care regarding **Function Referential Identity** to prevent unnecessary re-renders in optimized subtrees.

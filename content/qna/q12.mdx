@@ -1,0 +1,128 @@
+---
+title: Question 12 (CSS, Tailwind & MUI)
+description: Learn how to implement a light/dark theme switcher in React/Next.js that avoids flicker on page load
+order: 44
+---
+
+To an SDE 2, the "Flicker" (officially called **FOUC - Flash of Unstyled Content**) is a **Critical Rendering Path** synchronization issue. 
+
+It happens because the browser's **HTML Parser** paints the initial HTML before the **JavaScript Bundle** (containing your logic to check `localStorage`) has even been downloaded or executed. By the time your JS sets the "dark" class, the browser has already rendered the default "light" pixels.
+
+---
+
+### 1. The Architectural Strategy: The "Blocking Script"
+To prevent flicker, you must execute a tiny piece of JavaScript **synchronously** in the `<head>` of your document, before the `<body>` is parsed.
+
+**Mechanics:**
+- JavaScript in the `<head>` is **parser-blocking**. 
+- While usually bad for performance, a 5-line script here is essential. It checks `localStorage` and applies a CSS class to the `<html>` element *before* the browser performs its first **Layout** and **Paint**.
+
+```html
+<!-- Inside <head>, before any CSS or Body -->
+<script>
+  (function() {
+    try {
+      const theme = localStorage.getItem('theme') || 
+                   (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      if (theme === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    } catch (e) {}
+  })();
+</script>
+```
+
+---
+
+### 2. Implementation with CSS Variables
+As an SDE 2, you don't swap whole CSS files. You swap **CSS Variable Tokens**. This ensures that the browser only needs to **Recalculate Styles**, which is much faster than a full re-render.
+
+```css
+:root {
+  --bg-color: #ffffff;
+  --text-color: #000000;
+}
+
+/* When the script adds the .dark class, these tokens update instantly */
+html.dark {
+  --bg-color: #0f172a;
+  --text-color: #f8fafc;
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  transition: background-color 0.3s ease; /* Smooth transition after initial load */
+}
+```
+
+---
+
+### 3. Tailwind JIT Strategy
+Tailwind handles this using the `selector` (formerly `class`) strategy. 
+
+**Mechanics:**
+In your `tailwind.config.js`, set `darkMode: 'selector'`. Tailwind will then generate utilities like `dark:bg-slate-900`. These utilities are only activated when a `.dark` class is found on a parent element (the `<html>` tag).
+
+```javascript
+// tailwind.config.js
+module.exports = {
+  darkMode: 'selector', // or 'class'
+  // ...
+}
+```
+
+---
+
+### 4. MUI Strategy: `InitColorSchemeScript`
+MUI v5/v6 handles this via the `CssVarsProvider`. 
+
+**The SDE 2 View:** MUI provides a built-in helper called `getInitColorSchemeScript()`. 
+- **Under the hood:** It injects exactly the same type of blocking script we discussed in step 1.
+- It also sets a `color-scheme` CSS property, which tells the browser engine to adjust native UI elements (like scrollbars and form inputs) to dark mode immediately.
+
+```jsx
+import { getInitColorSchemeScript } from '@mui/material/styles';
+
+// In a Next.js / Root Layout
+export default function RootLayout({ children }) {
+  return (
+    <html>
+      <head>
+        {getInitColorSchemeScript()}
+      </head>
+      <body>
+        <ThemeProvider theme={theme}>
+          {children}
+        </ThemeProvider>
+      </body>
+    </html>
+  );
+}
+```
+
+---
+
+### 5. SDE 2 Deep Dive: The Server-Side (SSR) Cookie Approach
+If you are using a framework like **Next.js**, the `localStorage` approach still has a tiny delay because `localStorage` is not accessible on the server.
+
+**The "Ultimate" SDE 2 Solution:**
+1.  Store the theme preference in a **Cookie**, not `localStorage`.
+2.  The server reads the cookie on the very first request (`getServerSideProps` or `cookies()` hook).
+3.  The server renders the `<html>` tag with the correct class **already present** in the HTML string.
+4.  **Result:** 0ms flicker, 0ms execution delay, and no need for a blocking script.
+
+---
+
+### 6. Summary of the Design System
+1.  **State Source:** Use a Cookie (for SSR) or `localStorage` (for SPA).
+2.  **Detection:** Use `window.matchMedia('(prefers-color-scheme: dark)')` to respect system-level OS settings by default.
+3.  **Application:** Apply a class (`.dark`) to the root element.
+4.  **Styling:** Use CSS Variables or Tailwind `dark:` utilities.
+5.  **Synchronization:** Ensure that when the user toggles the switch, you update the state (Cookie/Storage) AND the DOM class simultaneously.
+
+### Summary
+*   **Junior view:** Just use a button that changes the background color.
+*   **SDE 2 view:** It is a **Critical Rendering Path** challenge. We solve it by moving the theme resolution **Upstream**—either via a **Blocking Synchronous Script** in the `<head>` or via **Server-Side Cookie Injection**—to ensure the CSSOM is resolved before the first Paint.

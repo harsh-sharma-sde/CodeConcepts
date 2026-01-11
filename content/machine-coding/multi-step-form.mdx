@@ -1,0 +1,170 @@
+---
+title: Multi-step Form / Stepper
+description: Learn how to implement a multi-step form or stepper in React with proper state management across steps
+order: 48
+---
+
+To an SDE 2, a **Multi-step Form** is an exercise in **State Synchronization** and **Schema Validation**. 
+
+The goal is to maintain a "Single Source of Truth" for the form data while allowing independent navigation (Back/Next) through discrete UI views.
+
+---
+
+### 1. The Strategy
+1.  **Centralized State:** Use one object to hold all form fields.
+2.  **Navigation State:** An integer `step` to track the current view.
+3.  **Step Configuration:** An array of objects/components to make the system extensible.
+4.  **Validation:** Prevent moving forward if the current step's required fields are empty.
+
+---
+
+### 2. Machine Coding Implementation
+
+```jsx
+import React, { useState } from 'react';
+
+// Step 1: Define the sub-components
+const Step1 = ({ data, update }) => (
+  <div className="flex flex-col gap-4">
+    <h2 className="text-xl font-bold">Account Details</h2>
+    <input 
+      placeholder="Email" 
+      className="border p-2"
+      value={data.email} 
+      onChange={e => update({ email: e.target.value })} 
+    />
+  </div>
+);
+
+const Step2 = ({ data, update }) => (
+  <div className="flex flex-col gap-4">
+    <h2 className="text-xl font-bold">Personal Info</h2>
+    <input 
+      placeholder="Full Name" 
+      className="border p-2"
+      value={data.name} 
+      onChange={e => update({ name: e.target.value })} 
+    />
+  </div>
+);
+
+const Step3 = ({ data }) => (
+  <div>
+    <h2 className="text-xl font-bold">Review & Submit</h2>
+    <pre className="bg-gray-100 p-4">{JSON.stringify(data, null, 2)}</pre>
+  </div>
+);
+
+export default function MultiStepForm() {
+  const [step, setStep] = useState(0);
+  const [formData, setFormData] = useState({
+    email: '',
+    name: '',
+  });
+
+  const steps = [
+    { component: Step1, fields: ['email'] },
+    { component: Step2, fields: ['name'] },
+    { component: Step3, fields: [] }
+  ];
+
+  const updateFormData = (fields) => {
+    setFormData(prev => ({ ...prev, ...fields }));
+  };
+
+  const handleNext = () => {
+    // SDE 2 Logic: Validation Check
+    const currentStepFields = steps[step].fields;
+    const isInvalid = currentStepFields.some(f => !formData[f]);
+    
+    if (isInvalid) {
+      alert("Please fill in all fields before moving forward.");
+      return;
+    }
+    setStep(s => s + 1);
+  };
+
+  const handleBack = () => setStep(s => s - 1);
+
+  const handleSubmit = () => {
+    console.log("Submitting to API:", formData);
+    alert("Form Submitted!");
+  };
+
+  const ActiveStep = steps[step].component;
+
+  return (
+    <div className="p-10 max-w-lg mx-auto border rounded-xl shadow-lg">
+      {/* Progress Bar */}
+      <div className="flex gap-2 mb-8">
+        {steps.map((_, i) => (
+          <div key={i} className={`h-2 flex-1 rounded ${i <= step ? 'bg-blue-500' : 'bg-gray-200'}`} />
+        ))}
+      </div>
+
+      <ActiveStep data={formData} update={updateFormData} />
+
+      <div className="flex justify-between mt-8">
+        <button 
+          disabled={step === 0}
+          onClick={handleBack}
+          className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
+        >
+          Back
+        </button>
+        
+        {step === steps.length - 1 ? (
+          <button onClick={handleSubmit} className="px-4 py-2 bg-green-500 text-white rounded">
+            Submit
+          </button>
+        ) : (
+          <button onClick={handleNext} className="px-4 py-2 bg-blue-500 text-white rounded">
+            Next
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+### 3. SDE 2 Deep Dive: The Mechanics
+
+#### A. Data Accumulation
+Instead of having 3 separate states for 3 steps, we use a single **Object State**. 
+- **Benefit:** When the user reaches the "Review" step, you don't have to gather data from multiple sources; it's already in one place.
+- **Benefit:** If you want to save the progress to `localStorage`, you just stringify one object.
+
+#### B. Component Mapping
+Notice how we use an array of objects `steps = [{ component: Step1, ... }]`.
+- **Scalability:** If the product manager asks for a "Step 4," you just create the component and add it to the array. The navigation logic (`handleNext`, `handleBack`) remains untouched.
+
+#### C. Validation Mapping
+By associating a list of `fields` with each step, we decouple the validation logic from the component code.
+- `currentStepFields.some(f => !formData[f])` is a generic way to check if any required field for the *current* step is empty.
+
+---
+
+### 4. Advanced: Preserving State on Refresh
+In a real-world SDE 2 scenario, users hate losing data on a page refresh.
+
+```javascript
+// Quick SDE 2 Add-on
+useEffect(() => {
+  const saved = localStorage.getItem('form_progress');
+  if (saved) setFormData(JSON.parse(saved));
+}, []);
+
+useEffect(() => {
+  localStorage.setItem('form_progress', JSON.stringify(formData));
+}, [formData]);
+```
+
+### Summary for Machine Coding Round
+1.  **Centralize:** One `formData` object.
+2.  **Navigate:** One `step` integer.
+3.  **Validate:** Check required fields before `setStep(step + 1)`.
+4.  **Abstract:** Map steps in an array for easy scalability.
+5.  **UX:** Include a progress bar and a "Back" button.

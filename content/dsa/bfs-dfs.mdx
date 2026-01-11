@@ -1,0 +1,113 @@
+---
+title: BFS & DFS for DOM Traversal
+description: Learn how Breadth-First Search (BFS) and Depth-First Search (DFS) can be applied to traverse the DOM efficiently
+order: 94
+---
+
+To an SDE 2, traversing the DOM is a **Tree Traversal** problem on a non-binary tree (each node can have $N$ children). 
+
+The choice between **BFS** and **DFS** isn't just about the order of discovery; it's a decision about **Memory Profile** (Stack vs. Queue) and **Search Intent** (Level-by-level vs. Deep exploration).
+
+---
+
+### 1. BFS (Breadth-First Search)
+**The SDE 2 View:** BFS is a **Queue-based** traversal ($FIFO$). It explores the DOM level-by-level. This is the "Shortest Path" algorithm for trees—if you are looking for an element near the root, BFS will find it first.
+
+**Mechanics:**
+- **Space Complexity:** $O(W)$, where $W$ is the maximum **width** of the DOM tree. In a large "Data Table" component, $W$ can be huge, leading to high memory usage in the queue.
+- **Performance Trap:** Using `Array.shift()` for a queue in JavaScript is $O(N)$ because it re-indexes the whole array. For a massive DOM, an SDE 2 would use a proper Linked List based queue or two-pointer logic.
+
+```javascript
+function bfs(root) {
+  if (!root) return;
+  const queue = [root];
+
+  while (queue.length > 0) {
+    const node = queue.shift(); // SDE 2: O(n) operation in JS
+    
+    console.log(node.tagName); // Process node
+
+    // Add all children to the end of the queue
+    for (let child of node.children) {
+      queue.push(child);
+    }
+  }
+}
+```
+
+---
+
+### 2. DFS (Depth-First Search)
+**The SDE 2 View:** DFS is a **Stack-based** traversal ($LIFO$). It explores as deep as possible down one branch before backtracking. 
+
+**Mechanics:**
+- **Space Complexity:** $O(H)$, where $H$ is the maximum **height** (depth) of the tree.
+- **Recursion vs. Iteration:** 
+    - **Recursive DFS** uses the **JavaScript Call Stack**. If the DOM is extremely deep (e.g., 10,000 nested divs), you will hit a `RangeError: Maximum call stack size exceeded`.
+    - **Iterative DFS** uses a manual stack on the **Heap**, which is safer for deep trees.
+
+```javascript
+// Iterative DFS (SDE 2 preferred for deep DOMs)
+function dfs(root) {
+  if (!root) return;
+  const stack = [root];
+
+  while (stack.length > 0) {
+    const node = stack.pop(); // LIFO
+    
+    console.log(node.tagName);
+
+    // Push children in reverse order to process left-to-right
+    for (let i = node.children.length - 1; i >= 0; i--) {
+      stack.push(node.children[i]);
+    }
+  }
+}
+```
+
+---
+
+### 3. SDE 2 Deep Dive: When to use which?
+
+#### A. Use BFS when:
+- You are looking for something **close to the root** (e.g., finding the nearest `<section>` parent).
+- You are building a **Visual Debugger** that highlights elements level-by-level.
+- You need to process "layers" (e.g., finding all direct children of a component before their sub-children).
+
+#### B. Use DFS when:
+- You need to perform a **Structural Analysis** (e.g., calculating the total height of a document).
+- You are implementing **Event Bubbling/Capturing** logic.
+- You want to perform a **Deep Clone** of a node and its descendants.
+- Memory is tight and the tree is wide but shallow (Queue would be larger than Stack).
+
+---
+
+### 4. Browser Native: `TreeWalker` and `NodeIterator`
+As an SDE 2, you should know that the browser provides a **highly optimized C++ implementation** for these tasks. Before writing your own BFS/DFS, consider `document.createTreeWalker`.
+
+**Mechanics:**
+It is faster than manual JS traversal because it avoids creating intermediate arrays/stacks and stays closer to the browser's internal data structures.
+
+```javascript
+const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+
+while(walker.nextNode()) {
+  console.log(walker.currentNode.tagName); // This is an optimized DFS
+}
+```
+
+---
+
+### 5. Summary Table for SDE 2
+
+| Feature | BFS | DFS |
+| :--- | :--- | :--- |
+| **Data Structure** | Queue (FIFO) | Stack (LIFO) |
+| **Order** | Level-by-level | Branch-by-branch |
+| **Space Constraint** | Max Width ($W$) | Max Depth ($H$) |
+| **Recursion** | Harder to implement | Natural (using call stack) |
+| **Best Case** | Target is near the root | Target is at a leaf node |
+
+### Summary
+*   **Junior view:** It's how you loop through all elements in the DOM.
+*   **SDE 2 view:** It is a choice between **Queue-driven Level Traversal** and **Stack-driven Branch Exploration**, where we weigh the risk of **Call Stack Overflow** in DFS against the **Memory Pressure** of a large Queue in BFS, often opting for **Iterative** approaches or native **TreeWalkers** for production performance.

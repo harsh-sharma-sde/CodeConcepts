@@ -1,0 +1,119 @@
+---
+title: Error Boundaries
+description: Learn how Error Boundaries work in React, what they catch, limitations, and best practices
+order: 22
+---
+
+To an SDE 2, an **Error Boundary** is a specialized React component that implements a **Declarative Catch Block** for the component tree. 
+
+Internally, it leverages React’s **Fiber reconciliation engine** to "unwind" the stack when a component fails during rendering, preventing a single UI failure from unmounting the entire application (the "White Screen of Death").
+
+---
+
+### 1. The Core Mechanic: Fiber Tree Traversal
+When a component throws an error during the **Render Phase**, React does not immediately crash. 
+1. The engine begins to **bubble up** the error through the Fiber tree.
+2. It looks for a parent Fiber node that has the `getDerivedStateFromError` or `componentDidCatch` lifecycle methods.
+3. If it finds one, it "catches" the error and allows that component to render a **fallback UI**.
+4. If it reaches the root without finding a boundary, the entire app crashes.
+
+---
+
+### 2. Implementation: The Class Component Requirement
+As of now, Error Boundaries **must** be Class Components because the internal "Catch" hooks have not yet been implemented for functional components.
+
+```javascript
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  // Phase 1: Render Phase (Static)
+  // Used to update state so the next render shows the fallback UI.
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+
+  // Phase 2: Commit Phase (Side Effects)
+  // Used for logging (e.g., Sentry, LogRocket).
+  componentDidCatch(error, errorInfo) {
+    console.error("Uncaught error:", error, errorInfo);
+    // logToService(error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <h1>Something went wrong.</h1>;
+    }
+
+    return this.props.children; 
+  }
+}
+```
+
+---
+
+### 3. SDE 2 Deep Dive: What it DOES NOT catch
+This is a frequent source of production bugs. Error Boundaries only catch errors that occur during the **React Lifecycle** (rendering, lifecycle methods, and constructors). They do **not** catch:
+
+1.  **Event Handlers:** (e.g., `onClick`). Since these happen outside the rendering loop, use `try/catch` inside the handler.
+2.  **Asynchronous Code:** (`setTimeout`, `requestAnimationFrame`, `Promise`).
+3.  **Server Side Rendering (SSR):** Errors on the server side aren't caught by these boundaries.
+4.  **Errors in the Boundary itself:** A boundary cannot catch its own errors, only those in its children.
+
+---
+
+### 4. Internals: "Unwinding" the Stack
+When an error occurs, React enters a "recovery mode." 
+- It stops the current work on the "Work-in-Progress" Fiber tree.
+- It attempts to find the nearest error boundary. 
+- Once found, it schedules a **Sync Update** to render the fallback UI. 
+- This ensures the user sees a "Something went wrong" message instead of a broken, half-rendered interface.
+
+---
+
+### 5. Architectural Strategy: Granular Boundaries
+An SDE 2 knows that placing one global Error Boundary at the root is a "lazy" anti-pattern. Instead, use **Granular Boundaries** to isolate failures.
+
+**Example:**
+```jsx
+<Layout>
+  <ErrorBoundary fallback={<SidebarFallback />}>
+    <Sidebar />
+  </ErrorBoundary>
+  
+  <main>
+    <ErrorBoundary fallback={<MainContentFallback />}>
+      <MainContent />
+    </ErrorBoundary>
+  </main>
+</Layout>
+```
+**The logic:** If the Sidebar crashes (perhaps due to a malformed API response), the Main Content remains interactive. This is **Fault Tolerance** at the UI level.
+
+---
+
+### 6. Resetting the Boundary
+In modern apps, we want a "Try Again" button. This requires resetting the Error Boundary state. The common SDE 2 choice is using the library `react-error-boundary`, which provides a hook-like API and a `resetKeys` prop to automatically clear the error state when a certain value (like a URL) changes.
+
+```javascript
+import { ErrorBoundary } from 'react-error-boundary';
+
+function MyComponent() {
+  return (
+    <ErrorBoundary
+      FallbackComponent={ErrorFallback}
+      onReset={() => {
+        // Reset the state of your app so the error doesn't happen again
+      }}
+    >
+      <ComponentThatMightThrow />
+    </ErrorBoundary>
+  );
+}
+```
+
+### Summary
+*   **Junior view:** It’s a way to show a "Oops" message.
+*   **SDE 2 view:** It is a **Fiber-level recovery mechanism** for the declarative UI tree that prevents cascading failures. It requires understanding the difference between the **Render Phase** (catching) and **Commit Phase** (logging), and should be applied **granularly** to ensure high application availability.

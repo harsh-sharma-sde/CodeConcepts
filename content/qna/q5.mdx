@@ -1,0 +1,106 @@
+---
+title: Question 5 (React & Next)
+description: Learn how React's reconciliation algorithm works, how Fiber changed it, and why it improves performance
+order: 30
+---
+
+To an SDE 2, **Reconciliation** is the process of synchronizing the Virtual DOM with the Real DOM. **Fiber** is the reimplementation of the reconciliation engine that changed the process from a **Synchronous Recursive Tree Walk** to an **Asynchronous Linked-List Traversal.**
+
+---
+
+### 1. The Old World: The "Stack" Reconciler (Pre-React 16)
+**Mechanics:** Reconciliation was a recursive process. When state changed, React would recursively walk the entire tree, compare the old Virtual DOM with the new one, and calculate the "diff."
+
+**The Problem:** Because it used the **JavaScript Call Stack**, the process was synchronous and un-interruptible.
+- If you had a large component tree (e.g., 5,000 nodes), the diffing process might take 100ms.
+- During those 100ms, the main thread was blocked. If a user tried to type in an input or click a button, the browser couldn't respond. This resulted in **"Jank"** and dropped frames.
+
+---
+
+### 2. The New World: Fiber Reconciler
+**The SDE 2 View:** Fiber moved the "Work" from the Call Stack to the **Heap**. By representing each element as a **Fiber Node (a unit of work)** in a linked list, React gained the ability to pause, resume, and prioritize work.
+
+#### The Fiber Node Structure:
+Instead of just a tree, think of it as a **Singly-Linked List** where every node knows its `child`, its `sibling`, and its `return` (parent).
+
+```javascript
+// A Fiber Node is an internal data structure
+const fiberNode = {
+    type: 'div',
+    key: 'item-1',
+    stateNode: document.getElementById('item-1'), // Real DOM ref
+
+    // The Linked List Pointers
+    child: fiber_node_2,   // First child
+    sibling: fiber_node_3, // Next sibling
+    return: fiber_node_1,  // Parent
+
+    // Priority and Work
+    alternate: current_fiber_ref, // For Double Buffering
+    lanes: 0b00001,               // Priority bits
+    flags: 0b00010,               // "Placement" (needs to be inserted)
+};
+```
+
+---
+
+### 3. What changed? (Key Differences)
+
+#### A. Recursion vs. The Work Loop
+- **Old:** Recursive function calls `render(child)`. Once it starts, you can't stop.
+- **New:** A `while` loop that checks how much time is left in the current frame.
+
+```javascript
+// Conceptual Fiber Work Loop
+function workLoop() {
+  while (nextUnitOfWork && !shouldYield()) {
+    nextUnitOfWork = performUnitOfWork(nextUnitOfWork);
+  }
+  // If we yielded, the loop will resume in the next browser idle period
+}
+```
+
+#### B. Interruptibility & Prioritization
+Fiber introduced **Priority Lanes**. 
+- A "User Typing" update is marked with high priority.
+- A "Background Data Load" update is marked with low priority.
+If a low-priority render is taking too long and the user clicks a button, React can **pause** the low-priority render, jump to the high-priority click event, and then come back to finish the background render later.
+
+#### C. Two-Phase Reconciliation
+Fiber split reconciliation into two distinct phases:
+
+1.  **Render/Reconciliation Phase (Asynchronous):** React traverses the tree and calculates the changes. This phase can be interrupted. No changes are made to the Real DOM yet.
+2.  **Commit Phase (Synchronous):** React takes the calculated changes (the "Effect List") and applies them to the Real DOM in one single, atomic operation. This cannot be interrupted, ensuring a consistent UI.
+
+---
+
+### 4. Double Buffering (The "Alternate" Pointer)
+As an SDE 2, you'll recognize this from graphics programming (like OpenGL). React maintains two Fiber trees:
+1.  **Current Tree:** What is currently visible on the screen.
+2.  **Work-in-Progress (WIP) Tree:** The tree React is currently building during the Render Phase.
+
+When React finishes the WIP tree, it simply swaps the "Root" pointer to the WIP tree. The WIP tree becomes the Current tree. This makes the update appear instantaneous and allows React to "throw away" a WIP tree if a state update is cancelled.
+
+---
+
+### 5. Why this matters for SDE 2 Architecture
+
+#### Hooks and the Fiber List
+Since Fiber is a linked list, Hooks (`useState`, `useEffect`) are stored as a linked list **on the Fiber node**. This is the technical reason why you cannot call hooks inside `if` statements—it would break the order of the linked list.
+
+#### Concurrency (Concurrent Mode)
+Features like `useTransition` and `useDeferredValue` are only possible because of Fiber. They explicitly tell React: "Treat this update as low priority; feel free to interrupt it if the user interacts with the UI."
+
+---
+
+### Summary Table
+
+| Feature | Pre-Fiber (Stack) | Post-Fiber |
+| :--- | :--- | :--- |
+| **Logic** | Synchronous Recursion | Asynchronous Work Loop |
+| **Primary Data Structure** | Call Stack | Heap-based Linked List |
+| **Interruption** | Impossible | Supported (via Time Slicing) |
+| **Priority Handling** | First-in, First-out | Lane-based Prioritization |
+| **DOM Updates** | Interleaved with diffing | Batched in an Atomic Commit |
+
+**SDE 2 Conclusion:** Fiber isn't just a performance boost; it's a move from **Push-based rendering** (React renders everything immediately) to **Pull-based rendering** (React schedules work based on the browser's resources and user needs).

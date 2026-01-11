@@ -1,0 +1,107 @@
+---
+title: API Gateways
+description: Understand what an API Gateway is, why it’s used in modern systems, and how it fits into microservices architecture
+order: 77
+---
+
+To an SDE 2, an **API Gateway** is the **Distributed System's "Front Door."** It is a reverse proxy that sits between the client and a collection of backend microservices, acting as a centralized orchestrator for **Cross-Cutting Concerns**.
+
+Instead of every microservice implementing its own authentication, rate limiting, and logging, the Gateway handles these "concerns" at the edge, allowing services to focus purely on business logic.
+
+---
+
+### 1. The Under-the-Hood Mechanic: The Request Lifecycle
+The Gateway doesn't just "pass through" requests. It processes them in a pipeline:
+
+1.  **TLS Termination:** The Gateway handles the SSL/TLS handshake near the user, offloading the CPU-heavy encryption work from the internal services.
+2.  **Authentication/Authorization:** It validates JWTs or Session IDs. If the user is unauthenticated, the request is dropped before it ever touches your internal network.
+3.  **Rate Limiting:** It uses algorithms like **Token Bucket** or **Fixed Window** (often backed by Redis) to prevent a single client from overwhelming the system.
+4.  **Service Discovery/Routing:** It looks at the URL (e.g., `/v1/orders`) and consults a **Service Registry** (like Consul or Kubernetes DNS) to find the internal IP of the "Order Service."
+5.  **Request Transformation:** It may change the request (e.g., converting a public JSON request into an internal gRPC call).
+
+---
+
+### 2. SDE 2 Design Pattern: Backend For Frontend (BFF)
+**The SDE 2 View:** A single Gateway for everything can become a bottleneck or a "Monolithic Gateway." We use the **BFF Pattern**.
+
+**Mechanics:**
+You create separate Gateways for different client types (e.g., one for the Mobile App, one for the Web App).
+- **Mobile Gateway:** Might strip out unnecessary data to save the user's mobile data plan.
+- **Web Gateway:** Might provide full, high-fidelity data objects.
+
+---
+
+### 3. Machine Coding Example: Simple Node.js Gateway
+In a real system, you'd use **Kong**, **NGINX**, or **AWS API Gateway**, but understanding the logic is key.
+
+```javascript
+const express = require('express');
+const httpProxy = require('http-proxy');
+const apiProxy = httpProxy.createProxyServer();
+const app = express();
+
+// 1. Simple Rate Limiting Logic (Memory-based for demo)
+const rateLimit = {};
+const RATE_LIMIT_THRESHOLD = 100;
+
+app.use((req, res, next) => {
+  const ip = req.ip;
+  rateLimit[ip] = (rateLimit[ip] || 0) + 1;
+  
+  if (rateLimit[ip] > RATE_LIMIT_THRESHOLD) {
+    return res.status(429).send('Too Many Requests');
+  }
+  next();
+});
+
+// 2. Authentication Check
+app.use('/api/secure', (req, res, next) => {
+  const token = req.headers['authorization'];
+  if (token === 'valid-token') next();
+  else res.status(401).send('Unauthorized');
+});
+
+// 3. Dynamic Routing (Reverse Proxy)
+app.all('/api/users/*', (req, res) => {
+  // Logic to find internal service IP
+  apiProxy.web(req, res, { target: 'http://user-service:3001' });
+});
+
+app.all('/api/orders/*', (req, res) => {
+  apiProxy.web(req, res, { target: 'http://order-service:3002' });
+});
+
+app.listen(3000, () => console.log('API Gateway running on port 3000'));
+```
+
+---
+
+### 4. SDE 2 Deep Dive: Resiliency (Circuit Breaking)
+As an SDE 2, you must assume the "Order Service" will eventually be slow or down.
+
+**The Mechanics:**
+The Gateway implements a **Circuit Breaker**.
+- **Closed:** Requests flow normally.
+- **Open:** If the service fails 10% of the time, the Gateway "opens the circuit" and stops sending requests to that service for 30 seconds, immediately returning a fallback error to the user. This prevents the "Cascading Failure" (where the Gateway hangs waiting for a dead service, eventually running out of memory itself).
+
+---
+
+### 5. API Gateway vs. Load Balancer
+
+| Feature | Load Balancer (L4/L7) | API Gateway (L7) |
+| :--- | :--- | :--- |
+| **Primary Goal** | High Availability / Traffic Distribution. | Request Management / Security. |
+| **Logic** | Simple (Round Robin, Least Conn). | Complex (Auth, Transformation, Versioning). |
+| **Awareness** | Knows "IPs and Ports". | Knows "Users, Paths, and Scopes". |
+
+---
+
+### 6. SDE 2 Summary Checklist
+1.  **Security:** Does it handle TLS, Auth, and CORS?
+2.  **Observability:** Does it log every request with a `correlation-id` so we can trace it through the microservices?
+3.  **Performance:** Is the latency overhead acceptable? (Gateways add 5-20ms of overhead).
+4.  **Availability:** Is the Gateway itself redundant? If the Gateway dies, the whole system dies.
+
+### Summary
+*   **Junior view:** It’s a router for my microservices.
+*   **SDE 2 view:** It is a **Centralized Policy Enforcement Point** that decouples microservices from **Identity, Security, and Rate Limiting**, while providing **Resiliency (Circuit Breaking)** and **Protocol Translation** to optimize the communication between clients and the backend.

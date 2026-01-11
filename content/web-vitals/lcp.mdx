@@ -1,0 +1,104 @@
+---
+title: Largest Contentful Paint (LCP)
+description: Understand LCP, its importance in Core Web Vitals, how it affects UX, and optimization techniques
+order: 60
+---
+
+To an SDE 2, **LCP (Largest Contentful Paint)** is the most important "perceived performance" metric. It marks the point in the page load timeline when the main content has likely loaded. 
+
+Unlike older metrics like `DOMContentLoaded` (which just means the HTML is parsed), LCP measures the **Render Time** of the largest visible element (image or text block) within the viewport.
+
+---
+
+### 1. The Under-the-Hood Mechanics
+The browser engine (Blink/WebKit) doesn't just pick one element and stop. It is a **Continuous Calculation**:
+
+1.  **Candidate Tracking:** As the browser parses HTML and renders the tree, it keeps a record of the "Largest" element seen so far.
+2.  **Updating the Score:** If a new, larger element is rendered (e.g., a big hero image finishing after some text), the browser dispatches a new entry to the `PerformanceObserver`.
+3.  **Finalization:** The browser stops looking for LCP candidates once the user interacts with the page (click/scroll/keypress), as that usually changes what's visible.
+
+**What qualifies as an LCP candidate?**
+- `<img>` elements.
+- `<image>` inside an `<svg>`.
+- `<video>` (the poster image or the first frame).
+- Elements with a `background-image` loaded via `url()`.
+- Block-level elements containing text nodes.
+
+---
+
+### 2. The LCP Breakdown (The "Waterfall")
+As an SDE 2, you optimize LCP by breaking it into four sub-parts. If your LCP is 4 seconds, you need to know where those 4 seconds went:
+
+1.  **TTFB (Time to First Byte):** Time spent waiting for the server to respond.
+2.  **Resource Load Delay:** The time between TTFB and the browser starting to download the LCP image.
+3.  **Resource Load Duration:** The actual time taken to download the image.
+4.  **Element Render Delay:** The time between the image finishing download and it actually appearing on the screen (often blocked by heavy JS or CSS).
+
+---
+
+### 3. SDE 2 Code: Measuring LCP
+You don't just use Lighthouse; you track it in the field (RUM - Real User Monitoring) using the **PerformanceObserver API**.
+
+```javascript
+new PerformanceObserver((entryList) => {
+  const entries = entryList.getEntries();
+  const lastEntry = entries[entries.length - 1];
+  
+  console.log('LCP Value:', lastEntry.startTime);
+  console.log('LCP Element:', lastEntry.element); // The actual DOM node
+}).observe({ type: 'largest-contentful-paint', buffered: true });
+```
+
+---
+
+### 4. SDE 2 Optimization Strategies
+
+#### A. Fetch Priority (Reducing Load Delay)
+By default, the browser doesn't know which image is the "Hero" image until it finishes parsing. You can use **Fetch Priority** to hint to the browser's **Preload Scanner** to move this request to the front of the network queue.
+
+```html
+<!-- ✅ Tell the browser: "Download this first, even before other images" -->
+<img src="hero.jpg" fetchpriority="high">
+```
+
+#### B. Preloading (Eliminating Load Delay)
+If your LCP image is defined in a CSS file (`background-image`), the browser won't find it until it downloads, parses, and applies the CSS. 
+**The SDE 2 Fix:** Preload it in the HTML `<head>`.
+
+```html
+<link rel="preload" fetchpriority="high" as="image" href="hero.jpg">
+```
+
+#### C. Handling the "Lazy Load" Trap
+**Common Junior Mistake:** Adding `loading="lazy"` to every image on the page.
+If you lazy-load your Hero image, the browser will wait until the **Layout Phase** is complete to see if the image is in the viewport. This adds a massive **Resource Load Delay**.
+
+```html
+<!-- ❌ BAD for LCP -->
+<img src="hero.jpg" loading="lazy">
+
+<!-- ✅ GOOD for LCP -->
+<img src="hero.jpg"> 
+```
+
+#### D. Server-Side Rendering (SSR) vs. LCP
+In a **CSR (Client-Side Rendered)** app, the LCP is often delayed because the browser has to:
+1. Download JS.
+2. Execute JS.
+3. Fetch Data.
+4. Render the UI.
+
+**SSR** improves LCP because the image/text tag is present in the initial HTML string, allowing the browser to see it and start downloading it much earlier in the **Critical Rendering Path**.
+
+---
+
+### 5. SDE 2 Summary Checklist
+1.  **Identify the LCP element:** Is it an image? A text block?
+2.  **Compress & Format:** Is it a WebP/AVIF? Is it properly sized for the viewport?
+3.  **Priority:** Are we using `fetchpriority="high"` and avoiding `loading="lazy"`?
+4.  **Hosting:** Is our **TTFB** low? (Use a CDN, optimize DB queries).
+5.  **Main Thread:** Is the **Element Render Delay** high? (Check for long-running JS tasks that block the initial paint).
+
+### Summary
+*   **Junior view:** Make the image smaller.
+*   **SDE 2 view:** LCP is a multi-stage **Network and Rendering pipeline**. We optimize it by maximizing **Network Discovery** (Preload/FetchPriority), minimizing **Transfer Time** (Compression/CDN), and ensuring the **Main Thread** is free to paint the element as soon as the bytes arrive.

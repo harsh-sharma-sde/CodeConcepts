@@ -1,0 +1,129 @@
+---
+title: Question 11 (CSS, Tailwind & MUI)
+description: Learn how to make complex HTML tables accessible for screen readers and assistive technologies
+order: 43
+---
+
+To an SDE 2, making a data table accessible is about **Semantic Mapping**. A screen reader (SR) doesn't "see" your CSS layout; it parses the **Accessibility Tree**. 
+
+For a complex table (sorting, selection, expansion), your job is to ensure that the **Relationship** between data cells and headers is preserved and that **State Changes** are broadcast to the browser's A11y API.
+
+---
+
+### 1. Semantic Foundation (Native Tags)
+**The SDE 2 View:** Whenever possible, use native `<table>` tags. The browser automatically assigns the correct **ARIA Roles** (`table`, `row`, `columnheader`, `cell`) which are pre-programmed into screen readers.
+
+**Mechanics:**
+- `<th>`: Informs the SR that this cell is a header.
+- `scope="col"` / `scope="row"`: Explicitly defines the relationship direction. This is vital for complex tables where a row might have its own header.
+
+```html
+<table>
+  <caption>Monthly Financial Report</caption> <!-- Context for SR -->
+  <thead>
+    <tr>
+      <th scope="col">Date</th>
+      <th scope="col">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th scope="row">2023-10-01</th> <!-- Row Header -->
+      <td>$400.00</td>
+    </tr>
+  </tbody>
+</table>
+```
+
+---
+
+### 2. Handling Interactivity (State Management)
+
+#### A. Sorting
+When a user clicks a header to sort, the SR needs to know.
+- **`aria-sort`**: Use `ascending`, `descending`, or `none`.
+- **SDE 2 Logic:** Do not put the `onClick` on the `<th>` itself if it contains text; put it on a `<button>` inside the `<th>`. This tells the SR that the header is interactive.
+
+```html
+<th scope="col" aria-sort="ascending">
+  <button onClick={handleSort}>Date</button>
+</th>
+```
+
+#### B. Selection (Checkboxes)
+- **`aria-selected`**: Applied to the `<tr>` to indicate the row state.
+- **`aria-multiselectable="true"`**: Applied to the `<table>` if multiple rows can be picked.
+
+#### C. Expandable Rows
+- **`aria-expanded`**: Applied to the toggle button.
+- **`aria-controls`**: Points to the `id` of the row being expanded.
+
+---
+
+### 3. The Responsive Table Problem (The "Div" Table)
+As an SDE 2, you often use `display: block` or `display: flex` on table elements for mobile responsiveness. 
+**The Trap:** Most browsers **strip the table semantics** once you change the `display` property. To the SR, it becomes just a list of `divs`.
+
+**The Solution:** You must manually restore the roles.
+
+```html
+<!-- Tailwind example with roles restored -->
+<div role="table" aria-label="Users" class="flex flex-col">
+  <div role="row" class="flex">
+    <div role="columnheader" class="flex-1">Name</div>
+    <div role="columnheader" class="flex-1">Email</div>
+  </div>
+</div>
+```
+
+---
+
+### 4. Implementation in MUI vs. Tailwind
+
+#### MUI (`Table` Component)
+MUI components (like `Table`, `TableHead`, `TableCell`) render native HTML tags by default.
+- **SDE 2 Tip:** Always use the `component` prop if you need to change the underlying tag while keeping the style.
+- MUI handles much of the role management, but you must still manually provide `aria-label` to the `Table` and `scope` to the `TableCell`.
+
+```jsx
+<Table aria-label="purchases">
+  <TableHead>
+    <TableRow>
+      <TableCell scope="col">Product</TableCell>
+    </TableRow>
+  </TableHead>
+</Table>
+```
+
+#### Tailwind
+Tailwind doesn't give you accessibility for free. You must follow the **WAI-ARIA Authoring Practices**.
+- Use the `sr-only` class to provide context that is only visible to screen readers (e.g., "Sort by Date" instead of just a generic arrow icon).
+
+---
+
+### 5. SDE 2 Advanced: Dynamic Updates (`aria-live`)
+If your table filters or paginated via AJAX, a screen reader user might not realize the data has changed.
+
+**Mechanics:** Use an `aria-live` region (like `status`) to announce results.
+- "Showing 10 of 50 results."
+- "Filter applied: 5 items found."
+
+```html
+<div aria-live="polite" class="sr-only">
+  {statusMessage} 
+</div>
+```
+
+---
+
+### 6. Summary Checklist for SDE 2s
+1.  **Captions:** Always include a `<caption>` for table context.
+2.  **Scope:** Use `scope="col"` and `scope="row"`.
+3.  **Buttons:** Make headers/expanders `<button>` elements, not clickable `div`s.
+4.  **Contrast:** Ensure text-to-background contrast is at least **4.5:1** (WCAG AA).
+5.  **Keyboard Nav:** Users must be able to `Tab` through interactive headers and use `Enter` to sort.
+6.  **Focus Management:** If a row is deleted, move the focus to the next logical element, don't let it "vanish."
+
+### Summary
+*   **Junior view:** Just use a `<table>` tag.
+*   **SDE 2 view:** It is about maintaining the **Accessibility Tree** using **Explicit Scoping**, **ARIA State management** for dynamic interactions, and ensuring **Semantic Persistence** when applying responsive CSS layouts.

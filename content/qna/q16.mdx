@@ -1,0 +1,114 @@
+---
+title: Question 16 (System Design)
+description: Learn how to design a scalable micro-frontend architecture for multiple teams using Module Federation and independent deployments
+order: 59
+---
+
+To an SDE 2, architecting a **Micro-frontend (MFE)** setup for 10 teams is not about "slicing a website into pieces"—it is about building a **Distributed Platform** that balances **Autonomy** (allowing teams to deploy independently) with **Consistency** (ensuring the user sees a single, unified product).
+
+The gold standard for this is **Webpack 5 Module Federation**.
+
+---
+
+### 1. The High-Level Topology: Host and Remotes
+We use a **Hub-and-Spoke** model:
+- **The Shell (Host):** Owned by the "Platform Team." It handles Global Auth, Navigation, Layout (Header/Footer), and the Runtime Loading of MFEs.
+- **The MFEs (Remotes):** Owned by the 10 feature teams (e.g., Checkout Team, Search Team). Each is an independent repository with its own CI/CD pipeline.
+
+---
+
+### 2. The Runtime Mechanic: Module Federation
+**The SDE 2 View:** We avoid "Build-time composition" (NPM packages) because it requires re-building the whole app when a small component changes. We use **Runtime Composition**.
+
+**How it works:**
+Each MFE publishes a `remoteEntry.js` file. This is a manifest that tells the Shell: *"I have these components, and I need these versions of React/Lodash."*
+
+```javascript
+// webpack.config.js (Feature Team App)
+new ModuleFederationPlugin({
+  name: "checkout_mfe",
+  filename: "remoteEntry.js",
+  exposes: {
+    "./Cart": "./src/components/Cart", // Exposing the Cart component
+  },
+  shared: { 
+    react: { singleton: true, requiredVersion: deps.react }, 
+    "react-dom": { singleton: true } 
+  },
+});
+```
+
+---
+
+### 3. SDE 2 Deep Dive: Shared Dependency Management
+With 10 teams, the risk is downloading 10 copies of React. 
+**Strategy:** Use **Shared Singletons**. 
+- In the Webpack config, we mark core libraries as `singleton: true`. 
+- **The Logic:** At runtime, the Shell loads React. When an MFE is loaded, it checks the "Shared Scope." If React is already there and the version is compatible, it **reuses** the existing instance. This keeps the bundle size small and ensures there is only one React State tree.
+
+---
+
+### 4. Cross-MFE Communication (The "Anti-Pattern" Check)
+**The SDE 2 View:** Never share a Global Redux Store between 10 teams. This creates a "Dependency Hell" where Team A can break Team B’s state.
+
+**The Strategy:** **Loose Coupling.**
+1.  **URL (Primary):** The source of truth. Passing an `orderId` via the URL is the safest way to communicate.
+2.  **Custom Events:** Use a browser-native `Pub/Sub` model.
+    ```javascript
+    // Team A dispatches
+    window.dispatchEvent(new CustomEvent('ITEM_ADDED_TO_CART', { detail: { id: 123 } }));
+
+    // Team B (Shell or Cart MFE) listens
+    window.addEventListener('ITEM_ADDED_TO_CART', (e) => { ... });
+    ```
+3.  **Local Storage:** For persisting state across sessions.
+
+---
+
+### 5. Style Isolation: Preventing "Leaking"
+Global CSS is the enemy of MFEs. If Team A defines `.btn { color: blue }`, it shouldn't turn Team B's red buttons blue.
+- **Option A (Preferred):** **Tailwind with Prefixes.** Each team uses a unique prefix: `tw-checkout-p-4`.
+- **Option B:** **CSS Modules.** Generates unique hashes per build.
+- **Option C:** **Shadow DOM.** Provides hardware-level isolation but can be difficult for Modals and Tooltips.
+
+---
+
+### 6. Resilience: Error Boundaries & Fallbacks
+With 10 teams, **Micro-frontend A will eventually crash.** You cannot let it take down the whole site.
+
+**The Strategy:** Wrap every Remote import in a **React Error Boundary** and **Suspense**.
+
+```jsx
+const CheckoutCart = React.lazy(() => import("checkout/Cart"));
+
+function App() {
+  return (
+    <Layout>
+      <ErrorBoundary fallback={<ErrorMessage />}>
+        <Suspense fallback={<Skeleton />}>
+          <CheckoutCart />
+        </Suspense>
+      </ErrorBoundary>
+    </Layout>
+  );
+}
+```
+
+---
+
+### 7. Deployment: The "Service Discovery" Problem
+How does the Shell know the URL of 10 different `remoteEntry.js` files?
+1.  **Static Mapping:** A JSON file in the Shell (`remotes.json`). To update an MFE, you update this JSON.
+2.  **Dynamic Discovery:** An API endpoint that returns the current production URLs for all MFEs. This allows for **Atomic Rollbacks** and **Canary Deployments** (routing 5% of users to a new MFE version).
+
+---
+
+### 8. SDE 2 Summary Checklist
+1.  **Independent CI/CD:** Each team pushes to their own S3 bucket.
+2.  **Design System:** A shared NPM library of "Atoms" (Buttons, Inputs) to ensure visual consistency.
+3.  **Local Development:** A CLI tool that allows developers to run their MFE locally while "pointing" to the production Shell to see their changes in context.
+4.  **Monitoring:** Sentry tags that include the `mfe_name` and `version` to identify which team owns a specific production bug.
+
+### Summary
+*   **Junior view:** It’s a way to put different apps on one page.
+*   **SDE 2 view:** It is a **Federated Runtime System** that requires strict **Dependency Negotiation**, **Loose Communication Contracts**, and **Fault Tolerance** to prevent distributed failures across autonomous teams.

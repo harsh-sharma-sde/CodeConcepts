@@ -1,0 +1,102 @@
+---
+title: Critical Path CSS
+description: Learn what Critical Path CSS is, why it matters for performance, and how to implement it correctly
+order: 67
+---
+
+To an SDE 2, **Critical Path CSS** is an optimization strategy for the **Critical Rendering Path (CRP)**. Its goal is to eliminate the **Render-Blocking** nature of CSS for the "Above-the-Fold" (ATF) content.
+
+By inlining only the CSS required to render the initial viewport and deferring the rest, you significantly reduce the **First Contentful Paint (FCP)** and **Largest Contentful Paint (LCP)**.
+
+---
+
+### 1. The Under-the-Hood Mechanic: Render Blocking
+The browser engine (Blink/WebKit) cannot begin painting pixels until it has fully constructed the **CSSOM (CSS Object Model)**. 
+
+**The Default Behavior:**
+1. Browser parses HTML and sees `<link rel="stylesheet">`.
+2. It **stops** rendering.
+3. It initiates a network request for the `.css` file.
+4. It waits for the download, then parses the CSS to build the CSSOM.
+5. **Only then** does it combine the DOM + CSSOM to create the **Render Tree** and start the **Layout** phase.
+
+**The Critical CSS Behavior:**
+By inlining the "critical" styles in the `<head>`, the browser finds the CSSOM data immediately within the first HTML packet, allowing it to paint the ATF content **before** the external stylesheet even finishes downloading.
+
+---
+
+### 2. The 14KB Rule (TCP Slow Start)
+**The SDE 2 View:** For maximum performance, your HTML + Inlined Critical CSS should be under **14KB** (compressed).
+
+**Mechanics:**
+TCP connections start by sending a small number of packets (the **congestion window**), usually totaling around 14KB. If your critical content fits in this first "round trip," the browser can render the page without waiting for a second network oscillation.
+
+---
+
+### 3. Implementation: The Pattern
+
+```html
+<head>
+  <title>SDE 2 Optimized Page</title>
+
+  <!-- 1. CRITICAL CSS: Inlined for immediate rendering -->
+  <style>
+    /* Only styles for Header, Hero section, and Typography */
+    body { font-family: sans-serif; margin: 0; }
+    .hero { height: 400px; background: #007bff; color: white; display: flex; align-items: center; }
+    h1 { font-size: 2rem; margin-left: 20px; }
+  </style>
+
+  <!-- 2. NON-CRITICAL CSS: Deferred to avoid blocking the initial paint -->
+  <link rel="preload" href="full-styles.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+  
+  <!-- Fallback for users with JS disabled -->
+  <noscript><link rel="stylesheet" href="full-styles.css"></noscript>
+</head>
+<body>
+  <section class="hero">
+    <h1>Hello World</h1>
+  </section>
+  <!-- Rest of the content... -->
+</body>
+```
+
+---
+
+### 4. SDE 2 Deep Dive: Identifying "Critical"
+
+#### A. The Manual vs. Automated approach
+You don't manually pick classes. SDE 2s use tools like **Critical** or **Penthouse** in their CI/CD pipeline.
+1. These tools spin up a **Headless Chrome** instance (Puppeteer).
+2. They render the page at a specific viewport (e.g., 1280x800).
+3. They identify every CSS rule currently applied to elements in that viewport.
+4. They output a "Critical" CSS block and the remaining "Non-Critical" block.
+
+#### B. The Flash of Unstyled Content (FOUC)
+If your Critical CSS is *too* minimal, the user will see the ATF content correctly, but as they scroll down before the main CSS loads, the "Below-the-fold" content will look broken. Or, if the main CSS re-defines a critical property, you might see a "jump." 
+*   **SDE 2 Fix:** Ensure that the specificities in your Critical CSS match the main stylesheet exactly to prevent the browser from re-calculating the layout differently once the main file arrives.
+
+---
+
+### 5. Interaction with Caching
+**The SDE 2 Trade-off:** Inlining CSS means that CSS is **not cached** separately by the browser (it's part of the HTML).
+- **First Visit:** Inlining is a massive win (saves a network request).
+- **Repeat Visits:** Inlining is slightly wasteful because the browser already has the CSS file in its cache.
+
+**The Solution:** Some SDE 2s use a **Cookie-based approach**. 
+1. The first time a user visits, serve Inlined Critical CSS. 
+2. Set a cookie `css_cached=true`.
+3. On the second request, the server sees the cookie and sends a standard `<link>` tag instead of inlining, trusting the browser's cache.
+
+---
+
+### 6. SDE 2 Summary Checklist
+1.  **Extract:** Use automated tools to find ATF styles.
+2.  **Inline:** Place them in a `<style>` block in the `<head>`.
+3.  **Defer:** Use `rel="preload"` for the main stylesheet to load it asynchronously.
+4.  **Budget:** Keep the total initial HTML under 14KB.
+5.  **Monitor:** Watch the **LCP** and **FCP** metrics in Lighthouse to verify the improvement.
+
+### Summary
+*   **Junior view:** It’s putting some CSS in the HTML file to make it faster.
+*   **SDE 2 view:** It is a **Resource Prioritization** technique that hacks the **TCP Slow Start** and **CSSOM Blocking** logic to deliver a rendered viewport in a **single round-trip**, significantly reducing the **First Contentful Paint**.

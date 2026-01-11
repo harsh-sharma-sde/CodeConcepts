@@ -1,0 +1,120 @@
+---
+title: TypeScript Union vs Intersection
+description: Understand the difference between union and intersection types in TypeScript with examples
+order: 10
+---
+
+To an SDE 2, Unions and Intersections are best understood through the lens of **Set Theory** and **Structural Typing**. 
+
+While they seem like simple "OR" and "AND" operators, they behave differently depending on whether you are looking at the **allowed values** or the **available properties**.
+
+---
+
+### 1. Union Types (`|`)
+**The SDE 2 View:** A Union represents a value that is a member of the **Set A ∪ Set B**. 
+
+**Mechanics (The Property Paradox):** 
+While a value can be *either* A or B, the TypeScript compiler is conservative. If you have a variable of type `A | B`, you can only **safely** access properties that exist in **both** types (the intersection of their keys). To access unique properties, you must perform **Type Narrowing**.
+
+```typescript
+type Dog = { bark: () => void; eat: () => void };
+type Cat = { meow: () => void; eat: () => void };
+
+function handlePet(pet: Dog | Cat) {
+    pet.eat(); // Success: Exists in both (the "common" ground)
+    
+    // pet.bark(); // Error: Compiler doesn't know if it's a Dog.
+    
+    // Type Narrowing (Control Flow Analysis)
+    if ("bark" in pet) {
+        pet.bark(); // Success: Compiler narrowed 'pet' to 'Dog'
+    }
+}
+```
+
+---
+
+### 2. Intersection Types (`&`)
+**The SDE 2 View:** An Intersection represents a value that satisfies the requirements of **both Set A AND Set B**.
+
+**Mechanics (Accumulation):**
+Structurally, an intersection is an **accumulation of properties**. A value of type `A & B` must have every property from A and every property from B. This is the TypeScript equivalent of "Mixins" or multiple inheritance.
+
+```typescript
+type Draggable = { drag: () => void };
+type Resizable = { resize: () => void };
+
+// UIWidget has ALL properties from both
+type UIWidget = Draggable & Resizable;
+
+const widget: UIWidget = {
+    drag: () => console.log("Dragging"),
+    resize: () => console.log("Resizing")
+};
+```
+
+---
+
+### 3. SDE 2 Deep Dive: The Logic Flip
+The most confusing part for engineers is how the logic "flips" between **Values** and **Properties**.
+
+| Feature | Union (`A | B`) | Intersection (`A & B`) |
+| :--- | :--- | :--- |
+| **Set Theory** | **Union ($A \cup B$):** The set of all possible values is larger. | **Intersection ($A \cap B$):** The set of all possible values is smaller (more restrictive). |
+| **Properties** | **Fewer:** You can only access the "overlap" (intersection of keys). | **More:** You access the "sum" (union of keys). |
+
+---
+
+### 4. Under the Hood: Conflict Resolution
+What happens if two types in an intersection have the same property name but different types?
+
+```typescript
+type A = { id: string };
+type B = { id: number };
+
+type Conflicted = A & B;
+
+// const x: Conflicted = { id: ??? }; 
+// x.id is 'never'
+```
+**Mechanics:** TypeScript attempts to intersect the property types as well. Since a value cannot be both a `string` and a `number` simultaneously, the compiler reduces the type of `id` to `never`. 
+
+As an SDE 2, you use this to your advantage to create "un-instantiable" types or to detect logic errors in complex mapped types.
+
+---
+
+### 5. Architectural Use Case: Discriminated Unions
+This is the most powerful SDE 2 pattern combining Unions and Literal Types. It allows the compiler to perform **Exhaustiveness Checking**.
+
+```typescript
+interface Success {
+    status: "success"; // Discriminant (Tag)
+    data: string;
+}
+
+interface Failure {
+    status: "error";   // Discriminant (Tag)
+    message: string;
+}
+
+type ApiResponse = Success | Failure;
+
+function handle(res: ApiResponse) {
+    switch (res.status) {
+        case "success":
+            console.log(res.data); // Narrowed to Success
+            break;
+        case "error":
+            console.log(res.message); // Narrowed to Failure
+            break;
+    }
+}
+```
+**Under the Hood:** The compiler uses the literal string `"success"` as a "type-level tag." When the `switch` statement checks that tag, the compiler filters the Union set, leaving only the type that matches that tag in that code block.
+
+---
+
+### 6. Performance Impact (Compiler)
+Heavy use of Intersections (`&`) can significantly increase **Type Checking time** in large projects. Every time you intersect types, the compiler has to compute the "flattened" version of that type. If you have deep hierarchies of intersections, the compiler's "subtype reduction" algorithms can hit exponential complexity, leading to slow IDE feedback.
+
+**SDE 2 Best Practice:** Prefer `interfaces` with `extends` over `type` intersections where possible, as interfaces are internally cached by the compiler more efficiently.

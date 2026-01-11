@@ -1,0 +1,139 @@
+---
+title: Infinite Scroll in React
+description: Implement infinite scrolling using the Intersection Observer API with performance optimizations like debouncing and throttling
+order: 45
+---
+
+To an SDE 2, the old way of doing infinite scroll (listening to `window.onscroll`) is an anti-pattern because it forces the browser to run calculations on the **Main Thread** every few milliseconds, often leading to **Layout Thrashing**.
+
+The **Intersection Observer API** is the modern solution. It allows you to asynchronously observe changes in the intersection of a target element with an ancestor element or the top-level document's viewport.
+
+---
+
+### 1. The Strategy
+1.  **The Sentinel:** Place a hidden `div` at the very bottom of your list.
+2.  **The Observer:** Tell the browser: "Watch this `div`. When it becomes visible (even by 10%), execute my `fetchMore` function."
+3.  **The Guard:** Use a `loading` state to prevent "Double Fetching" if the user scrolls back and forth quickly.
+
+---
+
+### 2. Machine Coding Implementation
+
+```jsx
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+
+// Mock API
+const fetchItems = async (page) => {
+  await new Promise(res => setTimeout(res, 1000)); // Simulate network lag
+  return Array.from({ length: 10 }, (_, i) => `Item ${page * 10 + i}`);
+};
+
+export default function InfiniteScroll() {
+  const [items, setItems] = useState([]);
+  const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+
+  // The "Sentinel" Ref: The element we watch at the bottom
+  const observerTarget = useRef(null);
+
+  const loadMore = useCallback(async () => {
+    if (loading || !hasMore) return;
+    
+    setLoading(true);
+    const newItems = await fetchItems(page);
+    
+    if (newItems.length === 0) {
+      setHasMore(false);
+    } else {
+      setItems(prev => [...prev, ...newItems]);
+      setPage(prev => prev + 1);
+    }
+    setLoading(false);
+  }, [page, loading, hasMore]);
+
+  useEffect(() => {
+    // 1. Initialize the Observer
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // entries[0] is our observerTarget
+        if (entries[0].isIntersecting && hasMore) {
+          loadMore();
+        }
+      },
+      { threshold: 0.1 } // Fire when 10% of the element is visible
+    );
+
+    // 2. Start watching the target
+    if (observerTarget.current) {
+      observer.observe(observerTarget.current);
+    }
+
+    // 3. Clean up: Disconnect when component unmounts
+    return () => observer.disconnect();
+  }, [loadMore, hasMore]);
+
+  return (
+    <div className="p-10 max-w-md mx-auto">
+      <h1 className="text-2xl font-bold mb-4">Infinite List</h1>
+      
+      <ul className="space-y-4">
+        {items.map((item, index) => (
+          <li key={index} className="p-4 bg-gray-100 rounded shadow">
+            {item}
+          </li>
+        ))}
+      </ul>
+
+      {/* The Sentinel Element */}
+      <div ref={observerTarget} className="h-10 flex items-center justify-center">
+        {loading && <p>Loading more...</p>}
+        {!hasMore && <p>No more items.</p>}
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+### 3. SDE 2 Deep Dive: Why Intersection Observer?
+
+#### A. Performance (CPU Idle)
+With `onScroll`, the JS engine is constantly active. With `Intersection Observer`, the browser handles the intersection logic in its own **C++ internals**. Your JavaScript code only wakes up when a match is found.
+
+#### B. Throttling vs. Intersection Observer
+- **Throttling:** You run code every 200ms to check `element.getBoundingClientRect()`. This is still a "pull" model and can be jittery.
+- **Intersection Observer:** This is a "push" model (Publish/Subscribe). The browser pushes an event to you only when necessary.
+
+#### C. Handling the "Double Fetch" (Race Conditions)
+As an SDE 2, you must ensure that if `fetchMore` is already running, a second trigger is ignored.
+- **The code above** uses the `loading` flag inside `loadMore` to short-circuit any overlapping calls.
+- In a production environment, you might also use an **AbortController** to cancel an ongoing fetch if the user navigates away or the parameters change.
+
+---
+
+### 4. When to use Throttling instead?
+You would use **Throttling** if you need to calculate something *continually* based on scroll position, such as:
+1.  **Parallax Effects:** The position of a background image relative to the scroll offset.
+2.  **Reading Progress Bar:** Calculating what % of the page the user has read.
+
+**Simple Throttling logic for SDE 2s:**
+```javascript
+function throttle(func, limit) {
+  let inThrottle;
+  return function() {
+    if (!inThrottle) {
+      func.apply(this, arguments);
+      inThrottle = true;
+      setTimeout(() => inThrottle = false, limit);
+    }
+  }
+}
+```
+
+### Summary for Machine Coding Round
+1.  **Identify the need:** Infinite scroll needs a trigger at the bottom.
+2.  **Implementation:** Use `IntersectionObserver` via a `useRef` on a sentinel element.
+3.  **State Management:** Track `items`, `page`, and a `loading` boolean to prevent duplicate requests.
+4.  **Cleanup:** Always `observer.disconnect()` in the `useEffect` cleanup return to prevent memory leaks.

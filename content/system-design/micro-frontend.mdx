@@ -1,0 +1,112 @@
+---
+title: Micro-Frontends with Module Federation
+description: Learn how to implement micro-frontends using Webpack Module Federation for scalable frontend architecture
+order: 50
+---
+
+To an SDE 2, **Micro-frontends (MFE)** are a solution to the "Monolithic Frontend" problem. In a large organization, having 50+ developers working in one repository leads to deployment bottlenecks and "Dependency Hell."
+
+**Module Federation (MF)**, introduced in Webpack 5, is the gold standard for MFEs. It allows a JavaScript application to dynamically load code from another application at **runtime**, while sharing common dependencies (like React) to keep the bundle size small.
+
+---
+
+### 1. The Architecture: Host vs. Remote
+*   **Remote:** An independent app that "exposes" certain components or logic.
+*   **Host (Container):** The shell application that "consumes" remotes. It acts as the **Orchestrator**.
+
+---
+
+### 2. Under the Hood: The `remoteEntry.js`
+The "brain" of Module Federation is a tiny manifest file called `remoteEntry.js`. 
+
+**Mechanics:**
+1.  When the Host loads, it first fetches the `remoteEntry.js` from the Remote's URL.
+2.  This file contains a **Mapping** of all exposed modules and their required dependencies.
+3.  It does **not** contain the actual component code—it contains pointers to the chunks.
+
+---
+
+### 3. SDE 2 Key Insight: Dependency Negotiation
+The biggest challenge in MFEs is: *What if the Host uses React 18.2 and the Remote also uses React 18.2?* We don't want to download React twice.
+
+**Module Federation Logic:**
+- **Shared Scope:** Both apps declare their shared libraries in the config.
+- **Version Negotiation:** At runtime, the Host checks the version requirements. If the versions are compatible, it uses the **Singleton** instance already loaded by the Host.
+- **Fallback:** If the versions are incompatible (e.g., v16 vs v18), the Remote will download its own version into a separate "scope" to avoid breaking.
+
+---
+
+### 4. Code Example: Configuration
+
+#### The Remote (Exposing a Button)
+```javascript
+// remote/webpack.config.js
+new ModuleFederationPlugin({
+  name: "app_remote",
+  filename: "remoteEntry.js",
+  exposes: {
+    "./Button": "./src/components/Button", // The path to the component
+  },
+  shared: { 
+    react: { singleton: true, eager: true, requiredVersion: "18.2.0" },
+    "react-dom": { singleton: true } 
+  },
+});
+```
+
+#### The Host (Consuming the Button)
+```javascript
+// host/webpack.config.js
+new ModuleFederationPlugin({
+  name: "app_host",
+  remotes: {
+    // Points to the remote's manifest
+    remoteApp: "app_remote@http://localhost:3001/remoteEntry.js",
+  },
+  shared: { react: { singleton: true }, "react-dom": { singleton: true } },
+});
+
+// host/src/App.js
+const RemoteButton = React.lazy(() => import("remoteApp/Button"));
+
+const App = () => (
+  <Suspense fallback="Loading Button...">
+    <RemoteButton />
+  </Suspense>
+);
+```
+
+---
+
+### 5. SDE 2 Deep Dive: Communication & State
+
+#### A. Cross-MFE Communication
+As an SDE 2, you avoid sharing a global state (like a single Redux store) across MFEs. This creates "Runtime Coupling"—if Remote A changes its store schema, Host crashes.
+- **Best Practice:** Use **Custom Events** or the **URL**.
+- **Example:** If MFE-1 needs MFE-2 to update, it dispatches a `window.dispatchEvent(new CustomEvent('user_updated'))`.
+
+#### B. CSS Isolation
+In an MFE world, CSS is global. If Remote A has `.btn { color: red }` and Host has `.btn { color: blue }`, they will clash.
+- **Solutions:** 
+    1. **Tailwind Prefixes:** Use `prefix: 'mfe-a-'` in Tailwind config.
+    2. **CSS Modules:** Generates unique hashes.
+    3. **Shadow DOM:** Truly encapsulates styles (but can break some UI libraries).
+
+---
+
+### 6. Deployment: The "Independent" in Independent Deployment
+The power of MF is that you can deploy the Remote to S3/CloudFront **without re-building the Host**.
+1.  You update the code in Remote.
+2.  You build and deploy `remoteEntry.js` and chunks.
+3.  The next time a user refreshes the Host, it fetches the *new* `remoteEntry.js` and gets the new version of the component automatically.
+
+---
+
+### 7. SDE 2 Checklist: Reliability
+1.  **Error Boundaries:** Always wrap a Remote component in an Error Boundary. If the Remote server is down, you don't want the whole Host app to show a white screen.
+2.  **Versioning/Contracts:** Use a "contract" (like TypeScript interfaces) shared via an NPM package to ensure the Host knows exactly what props the Remote expects.
+3.  **Loading States:** Since Remotes are loaded over the network at runtime, use `React.Suspense` to handle the network latency.
+
+### Summary
+*   **Junior view:** It’s like an `iframe` but better.
+*   **SDE 2 view:** It is a **Runtime Orchestration Layer** that uses a **Manifest-driven Chunk Loading** system. It solves organizational scaling by allowing **Independent Deployment** and **Dependency Sharing**, but requires strict **CSS Scoping** and **Fault Tolerance** (Error Boundaries) to handle the risks of distributed UI.

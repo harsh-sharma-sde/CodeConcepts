@@ -1,0 +1,109 @@
+---
+title: Virtual DOM & Reconciliation (Diffing Algorithm)
+description: Understand how the Virtual DOM works and how React’s reconciliation and diffing algorithm updates the UI efficiently
+order: 17
+---
+
+To an SDE 2, the **Virtual DOM (VDOM)** is not just "a copy of the DOM." It is an **architectural pattern** designed to minimize the cost of **layout thrashing** and expensive DOM operations by using a "Buffer" in memory.
+
+---
+
+### 1. The "Why": The Cost of the Real DOM
+The real DOM is a C++ object inside the browser. Accessing it is relatively fast, but **modifying** it is expensive because it triggers:
+1.  **Recalculate Style:** Computing which CSS rules apply.
+2.  **Layout (Reflow):** Calculating the geometry (position/size) of every node.
+3.  **Repaint:** Filling in pixels.
+
+If you update 10 nodes sequentially, the browser might perform these steps 10 times. The VDOM allows us to batch these into a single update.
+
+---
+
+### 2. Under the Hood: The Data Structure
+The VDOM is a lightweight **JavaScript Object Tree**. It lives in the **Heap** and has no direct power to draw on the screen.
+
+```javascript
+// A VDOM Node (React Element)
+const vNode = {
+  type: 'div',
+  props: {
+    className: 'container',
+    children: [
+      { type: 'h1', props: { children: 'Hello' } }
+    ]
+  },
+  key: 'unique_id_1' // Crucial for diffing
+};
+```
+
+---
+
+### 3. The Reconciliation Algorithm (Diffing)
+Traditional tree-to-tree transformation algorithms are **$O(n^3)$**. If you had 1,000 nodes, it would take 1 billion comparisons. React implements a **Heuristic $O(n)$ algorithm** based on two assumptions:
+
+#### Assumption A: Different Types = Different Trees
+If a `<div>` is replaced by a `<span>`, React won't bother checking children. It tears down the old tree and builds a new one.
+*   **SDE 2 Insight:** This is why "Component Stability" is important. Switching component types unnecessarily causes massive re-mounts.
+
+#### Assumption B: Keys are Stable
+When dealing with lists, React uses the `key` prop to map nodes between the "Old" and "New" VDOM.
+
+```javascript
+// Old State
+<ul>
+  <li key="a">Item A</li>
+  <li key="b">Item B</li>
+</ul>
+
+// New State (Item C inserted at top)
+<ul>
+  <li key="c">Item C</li>
+  <li key="a">Item A</li>
+  <li key="b">Item B</li>
+</ul>
+```
+**Without Keys:** React would see `<li>A</li>` turned into `<li>C</li>` (mutate), and `<li>B</li>` turned into `<li>A</li>` (mutate), then add a new `<li>B</li>`.
+**With Keys:** React sees `key="c"` is new, and `key="a"` and `"b"` just moved their position. It performs one **Insertion** instead of three **Mutations**.
+
+---
+
+### 4. The Modern Era: React Fiber
+As an SDE 2, you must know that "Reconciliation" and "Rendering" are now separate.
+
+1.  **Reconciliation (Render Phase):** High-level logic. React builds a new Work-in-Progress tree. This phase is **Asynchronous/Interruptible**. React can pause this to handle a user click or animation frame.
+2.  **Commit Phase:** React applies the changes to the Real DOM. This phase is **Synchronous/Atomic** to prevent the UI from looking "half-finished."
+
+**The Fiber Data Structure:** Unlike the VDOM (which is a tree of objects), Fiber uses a **Singly Linked List of "Work Units."** Each node has a pointer to its `child`, `sibling`, and `return` (parent). This allows React to walk the tree without recursion, meaning it can stop and resume at any node.
+
+---
+
+### 5. Manual VDOM Logic (Simplified)
+
+```javascript
+function diff(oldVNode, newVNode) {
+    // 1. If new node doesn't exist, remove old
+    if (!newVNode) return { type: 'REMOVE' };
+
+    // 2. If types differ, replace entirely
+    if (oldVNode.type !== newVNode.type) return { type: 'REPLACE', newVNode };
+
+    // 3. If types match, compare props (e.g. className, style)
+    const propsDiff = diffProps(oldVNode.props, newVNode.props);
+
+    // 4. Recursively diff children
+    const childrenDiff = diffChildren(oldVNode.children, newVNode.children);
+
+    return { type: 'UPDATE', propsDiff, childrenDiff };
+}
+```
+
+---
+
+### 6. SDE 2 Performance Tips
+*   **Avoid Index as Key:** If you re-order a list, using the index as a key forces React to re-render every item because the "mapping" of `index -> data` changed, even if the data didn't.
+*   **PureComponent / useMemo:** These prevent the Reconciliation process from even starting for a subtree. If props are strictly equal, React skips the diffing for that node and its children entirely.
+*   **Fragment usage:** Using `<></>` (Fragments) prevents the creation of unnecessary Real DOM nodes (like extra wrapper `div`s), keeping the DOM tree shallow and making the browser's **Layout** phase faster.
+
+### Summary
+*   **VDOM:** A JS representation of the UI used to batch updates.
+*   **Reconciliation:** The $O(n)$ process of finding the "Delta" between states.
+*   **Fiber:** The engine that makes reconciliation interruptible by turning a recursive tree walk into a linked-list traversal.

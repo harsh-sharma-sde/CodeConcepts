@@ -1,0 +1,136 @@
+---
+title: MUI Theme Customization
+description: Learn how to customize Material-UI (MUI) themes for consistent styling and design systems
+order: 40
+---
+
+To an SDE 2, **MUI Theme Customization** is the process of defining a **Design System Schema** that is distributed through a component tree using the **React Context API**.
+
+Internally, MUI uses a **CSS-in-JS engine** (defaulting to Emotion). When you customize a theme, you are essentially modifying a global JavaScript object that the engine uses to generate and inject CSS rules into the browser's `<head>` at runtime.
+
+---
+
+### 1. The Under-the-Hood Mechanic: The Context Provider
+MUI’s `ThemeProvider` acts as a **Dependency Injection** mechanism. 
+
+1.  **Creation:** `createTheme()` performs a **deep merge** of your custom object with the default Material Design spec.
+2.  **Distribution:** The `ThemeProvider` stores this object in a React Context.
+3.  **Consumption:** Every MUI component (like `Button` or `Slider`) uses the `useTheme` hook (or a higher-order component) to access these values and calculate their final styles via the **Styled Engine**.
+
+---
+
+### 2. Implementation: The Three Levels of Customization
+
+#### A. Global Palette and Typography (Design Tokens)
+This is where you define your "Brand" variables.
+
+```javascript
+import { createTheme, ThemeProvider } from '@mui/material/styles';
+
+const theme = createTheme({
+  palette: {
+    primary: {
+      main: '#1976d2', // Changes the 'base' color for all primary components
+    },
+  },
+  typography: {
+    fontFamily: 'Inter, sans-serif',
+    h1: { fontSize: '2.5rem', fontWeight: 700 },
+  },
+});
+```
+
+#### B. Component Default Props
+Instead of passing `variant="outlined"` to every button, you can set it globally. This reduces boilerplate and ensures UI consistency.
+
+```javascript
+const theme = createTheme({
+  components: {
+    MuiButton: {
+      defaultProps: {
+        disableElevation: true, // All buttons now have no shadow by default
+        variant: 'contained',
+      },
+    },
+  },
+});
+```
+
+#### C. Style Overrides (The Powerful Layer)
+This allows you to change the actual CSS of any internal MUI "Slot" (e.g., the root, the label, the icon).
+
+```javascript
+const theme = createTheme({
+  components: {
+    MuiButton: {
+      styleOverrides: {
+        root: {
+          borderRadius: 8,
+          textTransform: 'none', // Override Material Design's default ALL CAPS
+        },
+      },
+    },
+  },
+});
+```
+
+---
+
+### 3. SDE 2 Deep Dive: Performance & Re-renders
+As an SDE 2, you must be careful with the **referential identity** of the theme object.
+
+**The Trap:**
+If you define your theme *inside* a functional component, a new theme object is created on every render.
+```javascript
+function App() {
+  const theme = createTheme(...); // ❌ Bad: Created on every render
+  return <ThemeProvider theme={theme}>...</ThemeProvider>;
+}
+```
+**The Impact:** Since `ThemeProvider` uses Context, every single MUI component in your app will re-render and the CSS-in-JS engine will re-calculate/re-inject styles on every click. 
+**The Solution:** Always define the theme object **outside** the component tree or memoize it using `useMemo`.
+
+---
+
+### 4. Modern Shift: CSS Variables (CssVarsProvider)
+The traditional MUI theme is JavaScript-based. This causes a "Flash of Unstyled Content" (FOUC) in SSR/Next.js because the JS must execute before the theme is applied.
+
+**The SDE 2 Solution:** Use MUI's newer **CSS Variables Support**.
+- Instead of injecting raw hex codes into styles, MUI injects CSS variables (e.g., `--mui-palette-primary-main`).
+- **Benefit:** You can switch themes (Dark/Light) by simply toggling a class on the `<html>` tag without re-rendering the entire React tree. This is significantly more performant.
+
+---
+
+### 5. Custom Variants
+As an SDE 2, you might need a component style that doesn't exist in Material Design (e.g., a "dashed" button).
+
+```javascript
+const theme = createTheme({
+  components: {
+    MuiButton: {
+      variants: [
+        {
+          props: { variant: 'dashed' },
+          style: {
+            border: '2px dashed blue',
+          },
+        },
+      ],
+    },
+  },
+});
+
+// Usage: <Button variant="dashed">Click Me</Button>
+```
+
+---
+
+### 6. Summary: SDE 2 Best Practices
+1.  **Deep Merging:** Use `createTheme` to ensure you don't accidentally wipe out default settings (like breakpoints or spacing).
+2.  **Memoization:** Keep the theme object stable to prevent "Global Re-renders."
+3.  **Composition over Overrides:** Try to use the `spacing` and `palette` values in your `styleOverrides` (e.g., `padding: theme.spacing(2)`) rather than hardcoded pixel values. This ensures that if you change the global spacing, the whole UI scales together.
+4.  **Zero-Runtime Goal:** Keep an eye on MUI’s move toward **Pigment CSS** (the future of MUI), which aims to move this theme resolution to **Build Time** to eliminate the runtime JS cost of Emotion.
+
+### Summary
+*   **Junior view:** It's how I change the colors of the buttons.
+*   **SDE 2 view:** It is a **Theming Schema** distributed via **React Context**, where **Emotion** acts as the runtime engine to map JS tokens to CSS rules, requiring careful **Referential Management** and a preference for **CSS Variables** to optimize the Critical Rendering Path.

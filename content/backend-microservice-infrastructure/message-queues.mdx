@@ -1,0 +1,108 @@
+---
+title: Message Queues vs Pub/Sub (RabbitMQ / Kafka)
+description: Understand the difference between message queues and pub/sub systems, and when to use RabbitMQ or Kafka
+order: 80
+---
+
+To an SDE 2, choosing between a Message Queue and a Pub/Sub system is a decision about **Message Ownership** and **Persistence**. 
+
+In a **Message Queue**, a message is a "Task" intended for **one** consumer to finish. In **Pub/Sub**, a message is an "Event" intended for **any** interested party to hear.
+
+---
+
+### 1. Message Queues: Point-to-Point (RabbitMQ)
+**The SDE 2 View:** This is a **Load Balancing** pattern. The broker is "Smart." It tracks which consumer is busy and ensures that each message is processed exactly once by a single worker.
+
+**Mechanics (RabbitMQ):**
+- **The Buffer:** Messages are stored in a queue. Once a consumer receives and **ACKs** (acknowledges) the message, it is deleted from the broker.
+- **Fair Dispatch:** Uses a **Prefetch count**. The broker won't send a new message to a worker until it has ACKed the previous one, preventing one slow worker from causing a bottleneck.
+- **Protocol:** Uses **AMQP**, a stateful binary protocol.
+
+---
+
+### 2. Message Streams: The Distributed Log (Kafka)
+**The SDE 2 View:** Kafka is not a traditional queue; it is an **Append-only Distributed Log**. The broker is "Dumb," and the consumer is "Smart."
+
+**Mechanics (Kafka):**
+- **Persistence:** Messages aren't deleted after being read. They stay on disk until a retention period (e.g., 7 days) expires.
+- **Consumer Offsets:** The consumer is responsible for remembering where it left off. It stores an **Offset** (a pointer).
+- **Replayability:** Because the data is still there, you can "rewind" the offset to re-process data from 3 days ago. This is vital for **Event Sourcing** and Data Pipelines.
+
+---
+
+### 3. Pub/Sub: The Broadcast (Redis Pub/Sub)
+**The SDE 2 View:** This is a **Fire-and-Forget** pattern. It is designed for real-time, low-latency broadcasting where historical data doesn't matter.
+
+**Mechanics (Redis):**
+- **No Persistence:** If a subscriber is offline when a message is sent, they **miss it forever**. Redis does not store the messages.
+- **Push Model:** The broker pushes messages to all active "subscribers" on a specific channel.
+- **Memory-speed:** Since it happens in RAM and doesn't write to disk, it is incredibly fast (sub-millisecond).
+
+---
+
+### 4. SDE 2 Comparison: The Mechanics
+
+| Feature | Message Queue (RabbitMQ) | Log-based (Kafka) | Pub/Sub (Redis) |
+| :--- | :--- | :--- | :--- |
+| **Consumption** | 1 Message -> 1 Consumer | 1 Message -> 1 per Group | 1 Message -> All Subscribers |
+| **Data Removal** | After Acknowledgement (ACK) | After Retention Period | **Immediately** (Fire & Forget) |
+| **Smart Layer** | Broker (manages state) | Consumer (manages offset) | Broker (broadcasts) |
+| **Ordering** | Guaranteed per queue | Guaranteed per **Partition** | Best effort |
+
+---
+
+### 5. Machine Coding Example (Conceptual)
+
+#### A. The Queue Pattern (RabbitMQ style)
+```javascript
+// Worker 1
+queue.consume('task_queue', (msg) => {
+  doHeavyWork(msg);
+  queue.ack(msg); // Message is now deleted from the server
+});
+```
+
+#### B. The Pub/Sub Pattern (Redis style)
+```javascript
+// Subscriber 1 (Analytics)
+redis.subscribe('user_signup', (msg) => {
+  logToAnalytics(msg);
+});
+
+// Subscriber 2 (Emailer)
+redis.subscribe('user_signup', (msg) => {
+  sendWelcomeEmail(msg);
+});
+// Both receive the same message simultaneously.
+```
+
+---
+
+### 6. SDE 2 Deep Dive: Consumer Groups (Kafka’s Hybrid)
+As an SDE 2, you know Kafka can behave like a queue using **Consumer Groups**. 
+- If 5 workers are in the same `group_id`, Kafka will distribute the partitions among them so each message is processed only once within that group. 
+- However, you can have a *second* group (e.g., `analytics_group`) that receives the **exact same stream** of messages. 
+- **The Result:** You get "Queue" behavior for scaling workers AND "Pub/Sub" behavior for broadcasting to different services.
+
+---
+
+### 7. SDE 2 Decision Matrix
+
+1.  **Use RabbitMQ (Queue) if:**
+    *   You need complex routing (Exchanges).
+    *   You need guaranteed delivery with per-message ACKs.
+    *   Tasks take a long time and need to be distributed across workers.
+
+2.  **Use Kafka (Stream) if:**
+    *   You have a massive volume of data (Gigabytes/sec).
+    *   You need to "Replay" data later.
+    *   You are building an **Event Driven Architecture** with multiple microservices.
+
+3.  **Use Redis Pub/Sub if:**
+    *   Latency is the #1 priority.
+    *   You are building a **Chat App** or **Live Notifications**.
+    *   You don't care if a user misses a message while they are offline.
+
+### Summary
+*   **Junior view:** It's how services talk to each other.
+*   **SDE 2 view:** It's a choice between **Point-to-Point Task Distribution** (Queue), **Distributed Immutable Logs** (Stream), or **Ephemeral Broadcasting** (Pub/Sub), depending on the requirements for **Persistence, Replayability, and Scalability.**

@@ -1,0 +1,92 @@
+---
+title: FID & INP (Interaction to Next Paint)
+description: Understand First Input Delay (FID) and Interaction to Next Paint (INP), why INP replaced FID, and how to optimize them
+order: 61
+---
+
+To an SDE 2, **INP (Interaction to Next Paint)** is the metric that measures **Main Thread availability**. It officially replaced FID (First Input Delay) in March 2024 because FID was too easy to "game"—it only measured the first interaction and ignored the time it took for the UI to actually update.
+
+INP measures the **latency of every interaction** (clicks, taps, and keyboard inputs) and reports the longest one. 
+
+---
+
+### 1. The Anatomy of an Interaction
+When a user clicks a button, the browser doesn't just run your code. The total time (INP) is composed of three distinct phases:
+
+1.  **Input Delay:** The time from the user clicking to the browser actually starting to execute your event handler. (This is high if the Main Thread is busy with other JS).
+2.  **Processing Time:** The time spent running your JavaScript code (the event listeners).
+3.  **Presentation Delay:** The time after your code finishes until the browser has recalculated styles, performed layout, and painted the new pixels to the screen.
+
+**Target:** An INP of **< 200ms** is considered "Good."
+
+---
+
+### 2. Under-the-Hood: The "Long Task" Problem
+The JavaScript engine (V8) runs on a **Single Threaded Event Loop**. If you have a "Long Task" (any task taking more than **50ms**), the main thread is effectively "blocked." 
+
+If a user clicks while a 300ms task is running, the **Input Delay** will be at least 300ms because the browser cannot interrupt the current task to handle the click.
+
+---
+
+### 3. SDE 2 Code: Identifying and Fixing Blocking Code
+
+#### The Problem: A Blocking Task
+In this example, the user clicks "Sort," and the UI freezes for a second while a massive array is processed. The user gets no visual feedback (like a spinner) until the sort is done.
+
+```javascript
+// ❌ BAD: Blocks the main thread for a long time
+button.addEventListener('click', () => {
+  // Processing 1 million items synchronously
+  const sortedData = heavySort(bigData); 
+  render(sortedData); // This paint is delayed until the sort is finished
+});
+```
+
+#### The Solution: Yielding to the Main Thread
+To improve INP, we must "Yield." This means breaking the long task into smaller chunks, allowing the browser to "sneak in" a UI update (Paint) between the chunks.
+
+**The SDE 2 Trick: `setTimeout(0)` or `scheduler.yield()`**
+
+```javascript
+// ✅ GOOD: Breaking up the task (Yielding)
+button.addEventListener('click', async () => {
+  // 1. Give immediate visual feedback (e.g., show a spinner)
+  showLoadingState();
+
+  // 2. Yield to the browser so it can actually paint that spinner
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  // 3. Perform the heavy work in chunks or move to a Web Worker
+  const sortedData = await performWorkInChunks(bigData);
+  
+  render(sortedData);
+});
+```
+
+---
+
+### 4. SDE 2 Strategy: `isInputPending` and `scheduler.postTask`
+Modern browser APIs allow for much more granular control over task priority.
+
+1.  **`navigator.scheduling.isInputPending()`**: This allows your JS loop to check: "Has the user tried to click anything while I was busy?" If yes, you can stop what you're doing and yield.
+2.  **`scheduler.postTask()`**: Allows you to categorize tasks as `user-visible`, `user-blocking`, or `background`. The browser then handles the scheduling priority.
+
+---
+
+### 5. Why FID was insufficient (The SDE 2 "Gotcha")
+**First Input Delay (FID)** only measured the **Input Delay** portion of the **First** interaction. 
+- If your first click was fast, but every subsequent click took 2 seconds to update the screen, you would have a "Good" FID but a "Terrible" user experience.
+- **INP** looks at the **entire lifecycle** and the **entire duration** (including the paint), making it a much more honest metric for responsiveness.
+
+---
+
+### 6. SDE 2 Summary Checklist
+1.  **Audit Long Tasks:** Use the Chrome DevTools "Performance" tab. Look for red triangles—these are tasks > 50ms.
+2.  **Minimize JS Execution:** Are you re-rendering the whole tree on a simple input? (Use `React.memo` or `useMemo`).
+3.  **Offload to Web Workers:** If you have heavy math/sorting, move it off the Main Thread entirely.
+4.  **Optimistic UI:** Provide instant visual feedback for interactions so the "Processing Time" feels shorter to the user.
+5.  **Yielding:** Break up initialization scripts so they don't block the page during load.
+
+### Summary
+*   **Junior view:** Make the click handler faster.
+*   **SDE 2 view:** INP is about **Main Thread Orchestration**. We minimize **Input Delay** by ensuring the thread isn't busy with long tasks, and we minimize **Presentation Delay** by ensuring our React/DOM updates don't trigger massive, synchronous **Reflows/Repaints**.

@@ -1,0 +1,101 @@
+---
+title: HashMaps in JavaScript
+description: Understand HashMaps, their importance for performance, and how to use them effectively
+order: 91
+---
+
+To an SDE 2, a **HashMap** (or `Map` in JS) is not just a key-value store; it is a **data structure designed to trade memory for constant-time ($O(1)$) access.** 
+
+However, "constant time" is an average-case abstraction. Under the hood, the performance of a HashMap depends on the **Hash Function**, **Collision Resolution Strategy**, and **Load Factor Management.**
+
+---
+
+### 1. The Core Mechanic: The Hash Table
+A HashMap is essentially a large, fixed-size **Array** (often called "buckets"). 
+
+1.  **Hashing:** When you provide a key, a **Hash Function** converts that key into a large integer.
+2.  **Indexing:** The engine performs a modulo operation: `index = hash % array_length`. This tells the engine exactly which "bucket" in memory the value should live in.
+
+**SDE 2 Insight:** The Hash Function must be **Deterministic** (same input always gives same output) and **Uniform** (keys should be spread out evenly to avoid "clustering").
+
+---
+
+### 2. Collision Resolution: When Keys Clash
+No hash function is perfect. Sometimes, two different keys will map to the exact same index. This is a **Collision**.
+
+#### Strategy A: Separate Chaining (Used in Java/Node.js)
+The bucket doesn't store the value directly; it stores a **Linked List** (or a **Red-Black Tree** in high-performance engines).
+- **The Mechanic:** If a collision occurs, the new entry is appended to the list at that index.
+- **The Performance Trap:** If a bucket becomes too deep, $O(1)$ degrades into $O(n)$ (a linear search through the list).
+
+#### Strategy B: Open Addressing (Linear Probing)
+- **The Mechanic:** If an index is taken, the engine looks at the next slot (`index + 1`), then the next, until it finds an empty space.
+- **The Performance Trap:** This can cause **Primary Clustering**, where large blocks of the array become occupied, making "empty slot searches" increasingly slow.
+
+---
+
+### 3. The Load Factor & Rehashing
+**The SDE 2 View:** A HashMap’s performance drops as it fills up. We use the **Load Factor** ($\alpha = \frac{n}{k}$) to decide when to grow.
+
+- **Load Factor ($\alpha$):** Usually set to **0.75**.
+- **The Rehash:** When the map is 75% full, the engine allocates a **new array (usually double the size)** and moves every single existing item to its new index in the new array.
+- **The Cost:** Rehashing is an **$O(n)$ operation**. If you are building a real-time system and your Map rehashes, you will see a "latency spike" where the CPU is pegged just moving pointers.
+
+---
+
+### 4. V8 Internals: `Object` vs. `Map`
+In JavaScript, an `Object` is often used as a HashMap, but for an SDE 2, they are very different:
+
+1.  **`Object`:** V8 optimizes objects using **Hidden Classes (Shapes)**. If you add/delete properties dynamically, the object might be demoted to "Dictionary Mode" (a standard Hash Table), which is slower.
+2.  **`Map`:** A true hash table implementation. It is optimized for frequent additions and removals. It also preserves the **Insertion Order** (internally using a Linked List alongside the Hash Table).
+
+---
+
+### 5. Simple Code Example: The "Pre-allocation" Trick
+In languages like Java or Go, you can pre-allocate the map size. In JS, we don't have direct control, but we should be mindful of growth.
+
+```javascript
+// SDE 2 Performance Tip:
+// If you know you are going to store 100,000 items, 
+// a standard Map will rehash about 10-15 times as it grows.
+
+const myData = new Map();
+
+for (let i = 0; i < 100000; i++) {
+    myData.set(`user_${i}`, { name: 'John' }); 
+    // Every time this Map hits its internal 75% threshold, 
+    // the whole process pauses to Rehash.
+}
+```
+
+---
+
+### 6. Security: Hash Flooding Attacks
+As an SDE 2, you must know that if an attacker knows your hash function, they can send a payload where **all keys collide at the same index**. 
+- This turns your $O(1)$ database/server into an $O(n)$ crawl, effectively performing a **DoS (Denial of Service) attack** via CPU exhaustion.
+- **Modern Fix:** Engines now use **Randomized Hashing** (salting the hash function) so the attacker cannot predict the index.
+
+---
+
+### 7. Memory Management & WeakMaps
+A common source of **Memory Leaks** in JS is keeping objects as keys in a standard `Map`. The `Map` holds a **Strong Reference** to the object, preventing the Garbage Collector from reclaiming it.
+
+**SDE 2 Solution:** Use `WeakMap`. 
+- It holds a **Weak Reference**. 
+- If the object is deleted elsewhere in your code, the `WeakMap` entry is automatically garbage collected.
+
+```javascript
+let user = { id: 1 };
+const metadata = new WeakMap();
+
+metadata.set(user, { lastLogin: Date.now() });
+
+user = null; // The entry in metadata is now eligible for Garbage Collection.
+```
+
+### Summary for SDE 2
+*   **Average Case:** $O(1)$ lookup via a Hash Function and Array Indexing.
+*   **Worst Case:** $O(n)$ due to **Collisions**.
+*   **Expansion:** $O(n)$ "Stop-the-world" **Rehash** when the **Load Factor** is exceeded.
+*   **Memory:** Use `WeakMap` to prevent leaks when using objects as keys.
+*   **Optimization:** Keep keys simple (strings/numbers) and avoid frequent `delete` operations in `Objects` to keep them in "Fast Mode."

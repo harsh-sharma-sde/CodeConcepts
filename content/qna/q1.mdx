@@ -1,0 +1,123 @@
+---
+title: Question 1 (JS & TS)
+description: Deep dive into the Node.js/JavaScript Event Loop, task queues, and execution order including microtasks and macrotasks
+order: 13
+---
+
+To understand the Event Loop in Node.js as an SDE 2, you must look beyond the browser's model. Node.js uses **Libuv** to handle the loop, which is divided into specific **phases**. 
+
+Crucially, `process.nextTick` and `Promises` are **not** part of the Libuv Event Loop phases; they are part of the **Node.js runtime** that executes *between* every phase of the loop.
+
+---
+
+### 1. The Priority Hierarchy
+Think of it as a series of queues. When the current operation finishes, Node checks these queues in a specific order of priority:
+
+1.  **Current Operation** (Synchronous code)
+2.  **`process.nextTick` Queue** (Highest priority "async")
+3.  **Microtask Queue** (Promises)
+4.  **The Event Loop Phases** (Timers, I/O, `setImmediate`, etc.)
+
+---
+
+### 2. The Players
+
+#### `process.nextTick`
+*   **The SDE 2 View:** It is not part of the event loop. It is an internal queue managed by Node.js. 
+*   **Mechanics:** It triggers immediately after the current operation completes, regardless of the current phase of the event loop. 
+*   **Danger:** If you call `process.nextTick` recursively, you will **starve** the Event Loop (I/O and Timers will never run).
+
+#### `Promise.then()` (Microtasks)
+*   **The SDE 2 View:** Executed immediately after the `nextTick` queue is drained and before the loop moves to the next phase.
+*   **Mechanics:** Just like in the browser, if a microtask adds another microtask, the engine keeps draining the queue until it is empty.
+
+#### `setImmediate`
+*   **The SDE 2 View:** This is a **Macrotask** that lives in the **Check Phase** of the Libuv loop.
+*   **Mechanics:** It is designed to run once the "Poll" phase (I/O) becomes idle. Unlike `nextTick`, it "yields" to the loop, allowing other phases to proceed.
+
+---
+
+### 3. The Event Loop Phases (Simplified)
+As the loop ticks, it enters these phases:
+1.  **Timers:** `setTimeout` / `setInterval`.
+2.  **Pending Callbacks:** System errors (e.g., TCP errors).
+3.  **Poll:** Retrieve new I/O events; execute I/O callbacks.
+4.  **Check:** `setImmediate` callbacks are run here.
+5.  **Close Callbacks:** `socket.on('close')`.
+
+**The Logic:** Between **every single phase** listed above, Node.js drains the `nextTick` queue and then the Microtask (Promise) queue.
+
+---
+
+### 4. Code Example: Execution Order
+
+```javascript
+const fs = require('fs');
+
+console.log("1. Global Sync");
+
+setTimeout(() => console.log("2. setTimeout (Timer Phase)"), 0);
+
+setImmediate(() => console.log("3. setImmediate (Check Phase)"));
+
+process.nextTick(() => console.log("4. nextTick (High Priority)"));
+
+Promise.resolve().then(() => console.log("5. Promise (Microtask)"));
+
+fs.readFile(__filename, () => {
+    console.log("6. I/O Callback (Poll Phase)");
+    
+    // Inside I/O, setImmediate always runs before setTimeout(0)
+    setTimeout(() => console.log("7. Nested setTimeout"), 0);
+    setImmediate(() => console.log("8. Nested setImmediate"));
+});
+
+console.log("9. Global Sync End");
+```
+
+#### Prediction / Analysis:
+1.  **Sync:** Logs `1` and `9`.
+2.  **nextTick:** The sync code finishes. Logs `4`.
+3.  **Microtasks:** Logs `5`.
+4.  **Timers Phase:** Logs `2`.
+5.  **Poll Phase:** Reads the file. (Nothing to log yet).
+6.  **Check Phase:** Logs `3`.
+7.  **Next Tick (Next loop):** The I/O finishes. Logs `6`.
+    - Inside I/O, `setImmediate` (8) is queued for the *next* Check phase.
+    - `setTimeout` (7) is queued for the *next* Timer phase.
+    - Because the Check phase comes *after* the Poll phase, `8` will always log before `7`.
+
+**Output:** `1, 9, 4, 5, 2, 3, 6, 8, 7`
+
+---
+
+### 5. SDE 2 Critical Comparison: `nextTick` vs `setImmediate`
+
+| Feature | `process.nextTick` | `setImmediate` |
+| :--- | :--- | :--- |
+| **Phase** | Not in the loop (Immediate) | **Check Phase** of the loop |
+| **Priority** | Higher (Runs before next phase) | Lower (Runs in its own phase) |
+| **Starvation** | **Can starve I/O** | Safe (Yields to the loop) |
+| **Use Case** | Error handling or cleanup that MUST happen before any further I/O. | Offloading a heavy task to run after I/O. |
+
+### 6. Architectural Insight: When to use `nextTick`?
+As an SDE 2, you use `process.nextTick` to ensure **API consistency**. 
+If an API is sometimes synchronous and sometimes asynchronous, it can cause "Zalgo" (unpredictable control flow). You use `nextTick` to force it to be asynchronous, but ensure it happens before the rest of the loop continues.
+
+```javascript
+function maybeSync(cb) {
+  if (dataCached) {
+    // If we call cb() directly, it's synchronous.
+    // Use nextTick to ensure it's ALWAYS async, but fast.
+    process.nextTick(cb); 
+    return;
+  }
+  fs.readFile(file, cb);
+}
+```
+
+### Summary
+*   **Synchronous** code executes first.
+*   **`process.nextTick`** is the "express lane"—it runs immediately after the sync code or current phase.
+*   **`Promises`** are the "fast lane"—they run right after the express lane.
+*   **`setImmediate`** is part of the "regular traffic" (Event Loop) and specifically waits for the **Check Phase**.

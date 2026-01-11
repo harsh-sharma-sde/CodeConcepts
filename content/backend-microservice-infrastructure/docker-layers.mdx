@@ -1,0 +1,91 @@
+---
+title: Docker Layers
+description: Understand Docker image layers, how they work, and how to optimize them for faster builds and smaller images
+order: 82
+---
+
+To an SDE 2, **Docker Layers** are the fundamental unit of the **Union File System (UnionFS)**. They are essentially a stack of immutable, versioned filesystem changes that allow for massive storage efficiency and rapid container startup.
+
+---
+
+### 1. The Under-the-Hood Mechanic: UnionFS & Overlay2
+**The SDE 2 View:** When you pull an image, you aren't downloading one big file. You are downloading a series of **tarballs** that represent "diffs" (incremental changes).
+
+**Mechanics:**
+Docker uses a storage driver (usually **Overlay2**) to "flatten" these layers into a single merged view.
+*   **LowerDir:** The Read-Only image layers.
+*   **UpperDir:** The thin Read-Write layer (where container changes happen).
+*   **MergedDir:** The "Unified" view the application actually sees.
+
+When the application looks for a file, the kernel looks from the top layer down. If the file exists in the top layer, it uses it; otherwise, it keeps looking deeper into the stack.
+
+---
+
+### 2. Copy-on-Write (CoW) Strategy
+**The SDE 2 View:** This is why Docker is so efficient. 
+
+**Mechanics:**
+Imagine an image layer contains a 1GB database file. 
+1.  When you start the container, Docker doesn't copy that 1GB file. It just creates a pointer.
+2.  If your application modifies that file, the kernel performs a **Copy-on-Write**: it copies the 1GB file from the read-only layer up to the read-write layer and *then* modifies it.
+3.  **Result:** Multiple containers can share the same 1GB read-only layer simultaneously, saving massive disk space.
+
+---
+
+### 3. Layer Creation: `RUN`, `COPY`, `ADD`
+**The SDE 2 View:** Not every line in a Dockerfile creates a layer. Only instructions that modify the filesystem do.
+
+*   `ENV`, `EXPOSE`, `LABEL`: Modify **Metadata** (No new layer).
+*   `RUN`, `COPY`, `ADD`: Create a **New Layer**.
+
+---
+
+### 4. Code Example: Layer Squashing
+
+#### ❌ The "Bloated" Way (Two Layers)
+In this example, the temporary files and the installer are saved in Layer 1. Even though we "delete" them in Layer 2, they still exist in the read-only history of the image.
+
+```dockerfile
+RUN apt-get update
+RUN apt-get install -y large-package
+RUN rm -rf /var/lib/apt/lists/*  # ❌ Too late! The data is trapped in the layer above.
+```
+
+#### ✅ The SDE 2 Way (One Layer)
+By chaining commands with `&&`, we perform the update, install, and cleanup in a **single transaction**. The temporary files never get "committed" to a read-only layer.
+
+```dockerfile
+# This creates exactly ONE layer and is significantly smaller
+RUN apt-get update && \
+    apt-get install -y large-package && \
+    rm -rf /var/lib/apt/lists/*
+```
+
+---
+
+### 5. SDE 2 Deep Dive: Content-Addressable Storage
+Docker identifies layers using a **Content Hash (SHA256)**, not by their name or order.
+
+**Why this matters:**
+If you have two different images from two different teams, but both start with `FROM node:20-alpine`, your Docker engine is smart enough to store that base layer **only once** on the host. This is called **De-duplication**.
+
+---
+
+### 6. Layer Invalidation (The Build Cache)
+As an SDE 2, you must protect your "Hot" cache.
+- When Docker builds a layer, it looks at the command and the files involved.
+- If it sees `COPY package.json .`, it checks the hash of that file. 
+- If the hash is the same as the last build, it uses the **Cache**.
+- **The Catch:** Once a single layer is invalidated (e.g., you changed a file), **every subsequent layer** in the Dockerfile must be re-built from scratch.
+
+---
+
+### 7. SDE 2 Summary Checklist
+1.  **Chain Commands:** Use `&&` to keep layers clean of temporary build artifacts.
+2.  **Order for Cache:** Put the most stable layers (OS, Dependencies) at the top and the most volatile layers (Source Code) at the bottom.
+3.  **Minimize `COPY . .`:** Be specific. If you only need `src`, only copy `src`.
+4.  **Use `.dockerignore`:** Prevent the `.git` folder or `node_modules` from accidentally invalidating a layer hash.
+
+### Summary
+*   **Junior view:** It’s a list of steps in the Dockerfile.
+*   **SDE 2 view:** It is a **Content-Addressable Stack** of immutable filesystem diffs. We optimize it using **Chained Commands** to prevent bloat and **Strategic Ordering** to maximize the **Build Cache** and reduce **Network Payload** during deployments.

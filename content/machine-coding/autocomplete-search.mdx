@@ -1,0 +1,136 @@
+---
+title: Autocomplete Search Optimization
+description: Learn how to implement an autocomplete search input with caching and race condition handling using AbortController
+order: 46
+---
+
+To an SDE 2, an Autocomplete is not just an input field; it is a **Distributed System client** that must handle **Network Latency**, **Asynchronous Race Conditions**, and **Resource Optimization**.
+
+---
+
+### 1. The Core Problems
+1.  **Race Conditions:** If you search for "A", then "AB", the request for "A" might return *after* "AB" due to network jitter. Without handling, the UI would show stale results for "A".
+2.  **Redundant Traffic:** Users often backspace and re-type. Fetching the same string twice is a waste of server CPU and bandwidth.
+3.  **Main Thread Jitter:** Firing a request on every keystroke causes excessive processing.
+
+---
+
+### 2. Machine Coding Implementation
+
+```jsx
+import React, { useState, useEffect, useRef } from 'react';
+
+export default function Autocomplete() {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  
+  // SDE 2 Insight: Use a Ref for the cache to persist across renders 
+  // without triggering re-renders when the cache is updated.
+  const cache = useRef({}); 
+  
+  // Ref to track the current AbortController
+  const controllerRef = useRef(null);
+
+  useEffect(() => {
+    if (!query) {
+      setResults([]);
+      return;
+    }
+
+    // 1. Check Cache first (Memory lookup is O(1))
+    if (cache.current[query]) {
+      setResults(cache.current[query]);
+      return;
+    }
+
+    // 2. Handle Race Conditions: Abort previous pending request
+    if (controllerRef.current) {
+      controllerRef.current.abort();
+    }
+
+    // Create a new controller for the current request
+    const controller = new AbortController();
+    controllerRef.current = controller;
+
+    const fetchData = async () => {
+      try {
+        // 3. Debounce (Simulated here by setTimeout, but usually a separate logic)
+        const delayTimer = setTimeout(async () => {
+          console.log(`Fetching: ${query}`);
+          const res = await fetch(
+            `https://dummyjson.com/products/search?q=${query}`, 
+            { signal: controller.signal } // Link the abort signal
+          );
+          const data = await res.json();
+
+          // 4. Update Cache and State
+          cache.current[query] = data.products;
+          setResults(data.products);
+        }, 400); // 400ms debounce
+
+        return () => clearTimeout(delayTimer);
+      } catch (err) {
+        if (err.name === 'AbortError') {
+          console.log('Request Aborted:', query);
+        } else {
+          console.error('Fetch Error:', err);
+        }
+      }
+    };
+
+    fetchData();
+
+    // Cleanup: Abort if component unmounts or query changes
+    return () => {
+      controller.abort();
+    };
+  }, [query]);
+
+  return (
+    <div className="p-10 max-w-md mx-auto">
+      <input
+        type="text"
+        className="w-full p-3 border-2 border-blue-500 rounded-lg outline-none"
+        placeholder="Search (e.g. 'phone')..."
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      
+      <div className="mt-2 bg-white border rounded-lg shadow-xl overflow-hidden">
+        {results.map((item) => (
+          <div key={item.id} className="p-3 hover:bg-gray-100 border-b last:border-none cursor-pointer">
+            {item.title}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+### 3. SDE 2 Deep Dive: The Mechanics
+
+#### A. AbortController (Network Level)
+When you call `controller.abort()`, the browser doesn't just ignore the response; it **physically closes the TCP/HTTP connection** (or stops the stream in HTTP/2). This saves the user's data plan and avoids wasting browser memory on processing a response that will never be used.
+
+#### B. The Cache (Memory Trade-off)
+Using `cache.current = {}` is a simple **In-Memory Cache**. 
+- **Pros:** Instant UI feedback on backspace.
+- **Cons:** It consumes RAM. In a massive app, an SDE 2 would implement a **Least Recently Used (LRU) Cache** policy to prune the cache when it exceeds 50-100 entries.
+
+#### C. Handling the `AbortError`
+When a fetch is aborted, the promise is **rejected**. If you don't wrap it in a `try/catch` and check for `err.name === 'AbortError'`, your console will be full of "Uncaught (in promise)" errors. Handling this ensures the app remains "clean."
+
+#### D. The "Debounce" vs "Cancel" Relationship
+- **Debounce:** Prevents the network request from firing if the user is still typing (Saves Server Resources).
+- **AbortController:** Cancels a request that has already left the building but is no longer needed (Saves Client Resources).
+- **Together:** They provide the most optimized "Search-as-you-type" experience.
+
+### Summary for Machine Coding Round
+1.  **Cache:** Check `cache[query]` before fetching.
+2.  **Abort:** `controller.current?.abort()` before every new fetch.
+3.  **Signal:** Pass `signal` to the `fetch` options.
+4.  **Error Handling:** Catch and ignore `AbortError`.
+5.  **State:** Update both `results` and `cache` on success.

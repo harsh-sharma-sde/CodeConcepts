@@ -1,0 +1,99 @@
+---
+title: JavaScript Execution Context
+description: Deep dive into execution context, call stack, hoisting, and closures for SDE-2 interviews
+order: 2
+---
+
+For an SDE 2, understanding **Execution Context (EC)** is the key to mastering the debugger. It is the internal data structure managed by the JavaScript engine (V8, SpiderMonkey) that contains everything necessary to execute a specific piece of code.
+
+---
+
+### 1. The Conceptual Model: The "Unit of Work"
+Think of the Execution Context as a **container** or a **sandbox** created by the engine whenever code is run. There are three types:
+1.  **Global Execution Context (GEC):** Created when the script starts. There is only one.
+2.  **Function Execution Context (FEC):** Created every time a function is *invoked* (not defined).
+3.  **Eval Execution Context:** (Rarely used) for code inside `eval()`.
+
+---
+
+### 2. Under the Hood: The Two Phases
+When a function is called, the engine doesn't just run it. It prepares it in two distinct steps:
+
+#### Phase A: Creation Phase (Memory Allocation)
+Before a single line of code runs, the engine scans the code to set up the "Environment":
+1.  **Creation of the Lexical Environment:**
+    *   **Environment Record:** Maps variable names to values. This is where **Hoisting** happens. 
+        *   `var` is initialized as `undefined`.
+        *   `function` declarations are stored in their entirety in memory.
+        *   `let` and `const` are kept "uninitialized" (leading to the **Temporal Dead Zone**).
+2.  **Outer Reference (Scope Chain):** A pointer to the parent's Lexical Environment. This is how the engine looks up variables not found in the current context.
+3.  **`this` Binding:** The value of `this` is determined (based on how the function was called).
+
+#### Phase B: Execution Phase (Code Run)
+The engine runs the code line-by-line, assigning values to variables and executing function calls.
+
+---
+
+### 3. The Mechanics: The Call Stack
+Execution Contexts are managed via a **LIFO (Last In, First Out) Stack**. 
+
+- When the script starts, the **Global Context** is pushed.
+- When a function is called, a new **Function Context** is pushed to the top.
+- When the function finishes, its context is **popped** off, and the engine returns to the context below it.
+
+---
+
+### 4. Code Example: Context in Action
+
+```javascript
+var globalVar = "I am global";
+
+function outer() {
+    var outerVar = "I am outer";
+    
+    function inner() {
+        let innerVar = "I am inner";
+        console.log(globalVar); // Accesses GEC via Scope Chain
+    }
+
+    inner(); // A new FEC is created for 'inner'
+}
+
+outer(); // A new FEC is created for 'outer'
+```
+
+#### What’s happening in the Call Stack?
+
+1.  **Initial State:** [ `Global Context` ] 
+    - `globalVar` is allocated memory (hoisted as `undefined`).
+2.  **Call `outer()`:** [ `outer Context`, `Global Context` ]
+    - A new environment is created. `outerVar` is hoisted.
+3.  **Call `inner()`:** [ `inner Context`, `outer Context`, `Global Context` ]
+    - `innerVar` is in the TDZ until the code line `let innerVar...` is reached.
+4.  **`inner` finishes:** [ `outer Context`, `Global Context` ]
+    - `inner` context is popped. Memory for `innerVar` is marked for Garbage Collection (unless it's a closure).
+5.  **`outer` finishes:** [ `Global Context` ]
+
+---
+
+### 5. SDE 2 Critical Insights (The "Gotchas")
+
+#### Hoisting & The Heap
+As an SDE 2, you should know that while the Execution Context sits on the **Stack**, objects and function bodies are stored in the **Heap**. The Execution Context simply holds a reference (pointer) to that memory location.
+
+#### Why `let` and `const` "hoist" differently?
+Technically, `let` and `const` *are* hoisted (the engine knows they exist during the Creation Phase), but the engine forbids access to them until the Execution Phase reaches the declaration. This is the **Temporal Dead Zone (TDZ)**. 
+
+```javascript
+console.log(a); // undefined (var is initialized to undefined in Creation Phase)
+var a = 1;
+
+console.log(b); // ReferenceError (let is uninitialized in Creation Phase)
+let b = 2;
+```
+
+#### Performance & Context
+Creating execution contexts isn't free. Deep recursion creates a massive stack of Execution Contexts, which can lead to a **Stack Overflow**. Modern engines like V8 use **Tail Call Optimization (TCO)** in specific strict-mode scenarios to reuse the same stack frame, though support in JS is historically limited compared to languages like Haskell or Scala.
+
+#### Closures and Memory
+If a child context is popped but it has a closure (a function that references variables in the parent context), the **Lexical Environment** of the parent is *not* destroyed. It moves from the Stack to the **Heap** so the child can still access it later. This is a common source of memory leaks if not handled carefully.

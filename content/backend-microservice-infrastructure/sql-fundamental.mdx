@@ -1,0 +1,86 @@
+---
+title: SQL Fundamentals (Indexing & Normalization)
+description: Understand SQL indexing and normalization, why they matter, and how to use them effectively
+order: 85
+---
+
+To an SDE 2, SQL is not just about "writing queries"—it's about understanding how the **Storage Engine** organizes data on disk and how the **Query Optimizer** navigates those structures.
+
+---
+
+### 1. Indexing: The B-Tree Mechanics
+**The SDE 2 View:** A table without an index is a **Heap**. To find one row, the database must perform a **Full Table Scan** ($O(N)$), reading every page from the disk into memory. An index is a **B-Tree** data structure that reduces this to $O(\log N)$.
+
+#### A. Clustered vs. Non-Clustered Indexes
+*   **Clustered Index (The Table itself):** The data rows are physically stored on disk in the same order as the index. Usually, this is your **Primary Key**. A table can have only one.
+*   **Non-Clustered Index:** A separate structure that contains a copy of the indexed column and a **Pointer** (the Clustered Index Key) to the actual data row.
+
+**Mechanics:**
+When you query by a non-clustered index, the engine does a **"Bookmark Lookup."**
+1. Search the Non-Clustered B-Tree to find the PK.
+2. Go to the Clustered B-Tree to find the actual row.
+*   **SDE 2 Tip:** This double-lookup is why `SELECT *` is slow. If you only select the column that is already in the index, the engine performs a **Covering Index** scan and never touches the actual table.
+
+#### B. Compound Indexes & The Left-most Prefix Rule
+If you create an index on `(last_name, first_name)`, the B-Tree is sorted primarily by last name, then by first name.
+
+```sql
+-- ✅ Optimized: Uses the index
+SELECT * FROM users WHERE last_name = 'Doe' AND first_name = 'John';
+
+-- ✅ Optimized: Still uses the index (first part is present)
+SELECT * FROM users WHERE last_name = 'Doe';
+
+-- ❌ Slow (Full Scan): The index cannot be used because 'last_name' is missing
+SELECT * FROM users WHERE first_name = 'John';
+```
+
+---
+
+### 2. Normalization: Integrity vs. Redundancy
+**The SDE 2 View:** Normalization is the process of organizing data to minimize **Redundancy** and prevent **Anomalies** (Insertion, Update, Deletion).
+
+#### The Levels (Simplified)
+1.  **1NF (Atomicity):** No arrays or multi-valued attributes in a cell. Each column has one value.
+2.  **2NF (No Partial Dependency):** Every non-key column must depend on the **entire** Primary Key (relevant for composite keys).
+3.  **3NF (No Transitive Dependency):** Non-key columns should not depend on other non-key columns. "The key, the whole key, and nothing but the key."
+
+**Example (3NF):**
+Instead of having `Order(ID, ProductID, CategoryName)`, you split it. If the Category Name changes, you only update it in one place (The Category Table), not in 1 million Order rows.
+
+---
+
+### 3. Denormalization: The Performance Trade-off
+**The SDE 2 View:** Normalization is great for **Write-Heavy** systems (consistency). However, in **Read-Heavy** systems (like Analytics or Social Feeds), joining 10 tables is too expensive.
+
+**The Strategy:** We deliberately introduce redundancy. We might store the `username` directly in the `posts` table to avoid a JOIN during a feed fetch.
+*   **Cost:** Updates are slower (you have to update the name in multiple places).
+*   **Benefit:** Reads are $O(1)$ table access instead of $O(N)$ joins.
+
+---
+
+### 4. SDE 2 Deep Dive: The Query Optimizer
+When you run a query, the database creates an **Execution Plan**.
+- **Index Seek:** The engine traverses the B-Tree (Fast).
+- **Index Scan:** The engine reads the entire index (Slower).
+- **Table Scan:** The engine reads the entire table from disk (Slowest).
+
+**Performance Tip:** Use `EXPLAIN ANALYZE` (PostgreSQL) or `EXPLAIN` (MySQL) to see the cost.
+
+```sql
+EXPLAIN ANALYZE 
+SELECT email FROM users WHERE user_id = 500;
+-- You want to see "Index Seek" here.
+```
+
+---
+
+### 5. SDE 2 Summary Checklist
+1.  **Indexing:** Are you indexing columns used in `WHERE`, `JOIN`, and `ORDER BY`?
+2.  **Cardinality:** Don't index columns with low cardinality (like `gender` or `boolean` flags). The B-Tree won't help much, and a Table Scan might actually be faster.
+3.  **Write Overhead:** Every index makes `INSERT/UPDATE/DELETE` slower because the B-Tree must be re-balanced.
+4.  **Sargability:** Avoid functions on indexed columns in `WHERE` clauses (e.g., `WHERE YEAR(date) = 2023`). This makes the query **Non-Sargable**, forcing a Full Scan. Use `WHERE date >= '2023-01-01'` instead.
+
+### Summary
+*   **Junior view:** Indexes make things fast; Normalization makes things clean.
+*   **SDE 2 view:** **Indexing** is a trade-off between **Read Latency** and **Write Throughput** managed via **B-Tree traversals**. **Normalization** optimizes for **Data Integrity**, while **Denormalization** is a strategic move to trade **Storage and Update Complexity** for **Read Performance** in high-scale systems.

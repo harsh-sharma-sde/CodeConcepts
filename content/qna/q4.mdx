@@ -1,0 +1,138 @@
+---
+title: Question 4 (JS & TS)
+description: Strategies to maintain strong type safety in TypeScript applications when working with multiple evolving API versions
+order: 16
+---
+
+Handling type safety in a large-scale project with evolving APIs is one of the primary responsibilities of an SDE 2. The challenge isn't just "writing types," but managing the **Contract** between services.
+
+As an SDE 2, you should approach this using **Schema-First Development**, **Data Transfer Objects (DTOs)**, and **Runtime Validation**.
+
+---
+
+### 1. The Single Source of Truth (SSOT)
+Never manually write types for APIs in a large project. They will inevitably drift from the actual backend implementation.
+
+**The Strategy:** Use **OpenAPI (Swagger)** or **Protobuf/gRPC** definitions.
+**The Mechanics:** Use a generator (like `openapi-typescript`) to crawl your backend documentation and generate a single `schema.d.ts` file. 
+
+```bash
+# Example: Syncing types with a single command
+npx openapi-typescript https://api.v2.dev/swagger.json -o ./types/api-v2.ts
+```
+
+---
+
+### 2. Handling Multiple Versions: Discriminated Unions
+When your frontend or consumer needs to support multiple versions (e.g., during a phased migration), use a **Version Tag** to allow the compiler to narrow the types correctly.
+
+```typescript
+// Auto-generated or defined based on versions
+interface UserV1 {
+    version: "v1";
+    full_name: string; // Old field
+}
+
+interface UserV2 {
+    version: "v2";
+    firstName: string; // New fields
+    lastName: string;
+}
+
+type UserResponse = UserV1 | UserV2;
+
+function handleUser(res: UserResponse) {
+    if (res.version === "v2") {
+        // Compiler knows this is UserV2
+        console.log(res.firstName);
+    } else {
+        // Compiler knows this is UserV1
+        console.log(res.full_name);
+    }
+}
+```
+
+---
+
+### 3. Decoupling: DTOs vs. Domain Models
+A common SDE 2 mistake is letting API types bleed into the entire application. If the API changes, you have to fix 100 files.
+
+**The Strategy:** Implement a **Mapper** layer.
+- **DTO (Data Transfer Object):** The raw shape from the wire.
+- **Domain Model:** The shape your application *actually* wants to use.
+
+```typescript
+// Mapper Pattern
+function mapUserResponse(dto: UserV1 | UserV2): InternalUser {
+    if (dto.version === "v2") {
+        return { name: `${dto.firstName} ${dto.lastName}` };
+    }
+    return { name: dto.full_name };
+}
+```
+
+---
+
+### 4. Bridging the Gap: Runtime Validation (Zod)
+TypeScript types are erased at runtime. If the API sends a `string` where you expected a `number`, your app will crash despite having "perfect" TS types.
+
+**The Strategy:** Use **Zod** or **io-ts** to validate the data at the network boundary.
+
+```typescript
+import { z } from "zod";
+
+const UserSchema = z.object({
+    id: z.string().uuid(),
+    email: z.string().email(),
+    age: z.number().min(18),
+});
+
+// Extract the TS type from the schema (SSOT)
+type User = z.infer<typeof UserSchema>;
+
+async function fetchUser() {
+    const response = await fetch("/api/v2/user");
+    const rawData = await response.json();
+    
+    // This validates at RUNTIME and returns a typed object
+    const result = UserSchema.safeParse(rawData);
+    
+    if (!result.success) {
+        // Log to Sentry/DataDog: API is out of sync with Frontend!
+        console.error(result.error);
+        return null;
+    }
+    
+    return result.data; // Fully typed
+}
+```
+
+---
+
+### 5. Nominal Typing: Branded Types
+In large projects, you might have `v1UserId` (a number) and `v2UserId` (a UUID string). To prevent passing the wrong ID to a function, use **Branding**.
+
+**The Mechanics:** Intersect a type with a unique "brand" property that doesn't actually exist at runtime.
+
+```typescript
+type V1Id = string & { __brand: "V1Id" };
+type V2Id = string & { __brand: "V2Id" };
+
+function deleteUserV2(id: V2Id) { ... }
+
+const myId = "123-abc" as V1Id;
+
+// deleteUserV2(myId); 
+// Error! V1Id is not assignable to V2Id, even though both are strings.
+```
+
+---
+
+### 6. Summary of the SDE 2 Workflow
+1.  **Automate:** Generate types from OpenAPI/Protobuf.
+2.  **Validate:** Use Zod at the `fetch` level to ensure the backend isn't lying.
+3.  **Map:** Transform API DTOs into clean Internal Domain Models immediately.
+4.  **Narrow:** Use Discriminated Unions to handle version logic in the UI.
+5.  **Monitor:** If a runtime validation fails, trigger an alert. This catches "Breaking Changes" before users report bugs.
+
+**The SDE 2 Mindset:** Don't trust the network. Type safety is only real if it's enforced at the **boundary** (Runtime) and managed at the **source** (Schema).

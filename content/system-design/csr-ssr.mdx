@@ -1,0 +1,95 @@
+---
+title: Client-side vs Server-side State
+description: Understand the differences between client-side and server-side state in web applications, including management strategies and trade-offs
+order: 51
+---
+
+To an SDE 2, the distinction between Client State and Server State is about **Ownership** and **Synchronization**. 
+
+In the past, we treated everything as "State" and dumped it into Redux. Today, we realize that **Client State** is truly local to the UI, while **Server State** is simply a **Cache** of data that lives elsewhere and can change without the client's knowledge.
+
+---
+
+### 1. Client-Side State (UI State)
+**The SDE 2 View:** This is "Synchronous" state. It represents the current condition of the user interface. It is the **Single Source of Truth** for the view.
+
+*   **Characteristics:** Owned by the browser, ephemeral (lost on refresh), and updated instantly.
+*   **Examples:** Is a modal open? Which tab is selected? Form input values before submission.
+*   **Management:** `useState`, `useReducer`, or `Context API`.
+
+```javascript
+// Pure Client State: No network involved
+const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+const toggleMenu = () => setIsMenuOpen(!isMenuOpen);
+```
+
+---
+
+### 2. Server-Side State (Remote State)
+**The SDE 2 View:** This is "Asynchronous" state. The client does not own this data; it only owns a **snapshot** of it. Because multiple users can modify the server data, the client’s version can become "stale" at any moment.
+
+*   **Characteristics:** Owned by the database, persistent, and requires management of "Request Lifecycles" (Loading, Error, Success).
+*   **Challenges:** Caching, Deduping, Invalidation, and Re-fetching.
+*   **Management:** **TanStack Query (React Query)** or **SWR**.
+
+```javascript
+// Server State via TanStack Query
+const { data, isLoading, error } = useQuery({
+  queryKey: ['user', userId],
+  queryFn: () => fetchUser(userId),
+  staleTime: 1000 * 60 * 5, // SDE 2 Insight: Cache is fresh for 5 mins
+});
+```
+
+---
+
+### 3. SDE 2 Deep Dive: The Synchronization Problem
+
+#### A. Cache Invalidation
+The hardest part of Server State is knowing when to throw away the old data. 
+- **Scenario:** You update a user's name. The "User Profile" component is now stale, but it doesn't know the "Edit User" component just finished a POST request.
+- **SDE 2 Solution:** Use **Manual Invalidation** via Query Keys.
+
+```javascript
+const mutation = useMutation({
+  mutationFn: updateUser,
+  onSuccess: () => {
+    // Invalidate the 'user' cache so the UI re-fetches the fresh data
+    queryClient.invalidateQueries({ queryKey: ['user'] });
+  },
+});
+```
+
+#### B. Optimistic Updates
+To make an app feel "instant," an SDE 2 updates the UI *before* the server responds.
+1.  Cancel outgoing fetches (to prevent race conditions).
+2.  Snapshot the current state.
+3.  Manually update the cache with the "predicted" result.
+4.  If the server fails, **Rollback** to the snapshot.
+
+#### C. Normalized vs. Denormalized
+- **Client State** is often **Denormalized** (Component-specific).
+- **Server State** should ideally be **Normalized** in the cache (storing objects by ID) to ensure that if a "User" object is updated in one list, it updates everywhere across the app.
+
+---
+
+### 4. SDE 2 Architectural Decision: Where does it go?
+
+| Scenario | State Type | Why? |
+| :--- | :--- | :--- |
+| **User Authentication** | **Server** | Controlled by session/tokens on the backend. |
+| **Dark/Light Mode** | **Client** | Purely a UI preference; usually synced to LocalStorage. |
+| **Search Results** | **Server** | Too large to hold in local memory; needs pagination/caching. |
+| **A complex 5-step form** | **Client** | Don't hit the DB until the final "Submit" is clicked. |
+| **Real-time Notifications** | **Server** | Needs WebSockets or Polling to keep the local snapshot in sync. |
+
+---
+
+### 5. Why Redux is losing the war to specialized tools
+As an SDE 2, you know that 80% of Redux code was historically just boilerplate for handling API calls (`FETCH_START`, `FETCH_SUCCESS`, `FETCH_ERROR`). 
+- **Modern Architecture:** Use **React Query** for all Server State (handling caching and re-fetching automatically). Use **Zustand** or **Context** for the remaining 20% of pure Client State. This separation reduces bundle size and cognitive load.
+
+### Summary
+*   **Junior view:** Everything is `useState`.
+*   **SDE 2 view:** State is split into **UI State** (synchronous/local) and **Cache State** (asynchronous/remote). We use **Cache Invalidation** and **Optimistic Updates** to bridge the gap between the two, ensuring a highly responsive and consistent user experience.

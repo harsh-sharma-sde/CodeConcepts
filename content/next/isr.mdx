@@ -1,0 +1,100 @@
+---
+title: Incremental Static Regeneration (ISR)
+description: Learn about ISR in Next.js, how it allows static pages to update incrementally without a full rebuild
+order: 26
+---
+
+To an SDE 2, **Incremental Static Regeneration (ISR)** is a sophisticated **caching strategy** that combines the performance of **SSG** with the flexibility of **SSR**. 
+
+It implements the **Stale-While-Revalidate** pattern at the architectural level. It allows you to update static pages *after* you’ve built your site, without needing to trigger a full CI/CD rebuild of the entire project.
+
+---
+
+### 1. The Under-the-Hood Workflow
+As an SDE 2, you should view ISR as a state machine managing a distributed cache:
+
+1.  **Initial Request:** A user requests a page. The server checks its cache (usually at the Edge/CDN).
+2.  **Stale Hit:** If the page exists but the `revalidate` timer has expired, the server returns the **stale** (old) version of the page immediately. Performance remains $O(1)$.
+3.  **Background Regeneration:** The server triggers a background task to re-run the `getStaticProps` function for that specific page.
+4.  **Atomic Swap:** Once the new HTML and JSON are generated, the server replaces the old file in the cache with the new one.
+5.  **Subsequent Hits:** Future users receive the updated version until the `revalidate` timer expires again.
+
+---
+
+### 2. Code Example (Next.js)
+
+```javascript
+// pages/products/[id].js
+
+export async function getStaticProps({ params }) {
+  const product = await db.products.findUnique({ where: { id: params.id } });
+
+  return {
+    props: { product },
+    // THE ISR KEY:
+    // Re-generate the page in the background if a request comes in
+    // at least once every 60 seconds.
+    revalidate: 60, 
+  };
+}
+
+export async function getStaticPaths() {
+  return {
+    // Only pre-render high-traffic products at build time
+    paths: [{ params: { id: '1' } }, { params: { id: '2' } }],
+    // 'blocking' ensures that new products are generated on-demand
+    // and then cached for future use.
+    fallback: 'blocking',
+  };
+}
+
+export default function Product({ product }) {
+  return <div>{product.name} - ${product.price}</div>;
+}
+```
+
+---
+
+### 3. SDE 2 Deep Dive: The Mechanics
+
+#### A. The `fallback` Strategy
+Understanding the `fallback` value in `getStaticPaths` is crucial for system design:
+*   **`false`**: Any path not returned at build time results in a 404. (Pure SSG).
+*   **`true`**: React serves a "Loading" fallback immediately. Data is fetched on the client. (Good for UX, bad for SEO).
+*   **`blocking`**: The server performs a "mini-SSR" for the first request. The user waits, but receives a fully rendered page which is then cached for everyone else. (Best for SEO and consistency).
+
+#### B. On-Demand Revalidation (Webhooks)
+Standard ISR is time-based. However, an SDE 2 knows that "60 seconds" might be too long for a price change. 
+**Mechanics:** Modern frameworks allow **On-Demand Revalidation**. You can create an API route that your CMS calls via a Webhook to manually purge the cache for a specific path.
+
+```javascript
+// pages/api/revalidate.js
+export default async function handler(req, res) {
+  // Check for a secret token to prevent DDoS
+  if (req.query.secret !== process.env.MY_SECRET_TOKEN) {
+    return res.status(401).json({ message: 'Invalid token' });
+  }
+
+  try {
+    // Manually trigger regeneration for a specific product
+    await res.revalidate(`/products/${req.query.id}`);
+    return res.json({ revalidated: true });
+  } catch (err) {
+    return res.status(500).send('Error revalidating');
+  }
+}
+```
+
+#### C. Edge Consistency
+In a globally distributed system, ISR can lead to **Cache Inconsistency**. If User A hits a POP (Point of Presence) in New York and triggers a revalidation, User B in London might still see the old version until the London POP revalidates or the cache is purged globally. 
+
+---
+
+### 4. Why ISR Wins for SDE 2s
+1.  **Build Speed:** You don't have to build 100,000 pages at CI/CD time. You build the top 100 and let the rest generate as needed.
+2.  **Scalability:** Since pages are served as static files from a CDN after the first generation, your DB isn't hit for every request (unlike SSR).
+3.  **Resilience:** If your database goes down, ISR continues to serve the "Stale" version of the page indefinitely, preventing a site-wide outage.
+
+### Summary
+*   **Junior view:** It’s like SSG but you can set a timer to update it.
+*   **SDE 2 view:** It is a **Distributed Stale-While-Revalidate Cache Pattern** that decouples build-time constraints from data freshness, enabling $O(1)$ delivery of dynamic content with **Atomic Cache Invalidation** via time-based or event-driven triggers.

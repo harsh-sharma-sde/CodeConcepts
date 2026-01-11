@@ -1,0 +1,112 @@
+---
+title: Question 9 (CSS, TAILWIND & MUI)
+description: Understand the difference between CSS reflow and repaint, their performance impact, and techniques to minimize them
+order: 41
+---
+
+To an SDE 2, **Reflow** and **Repaint** are the two most expensive stages of the **Critical Rendering Path (CRP)**. Understanding the difference between them is the key to preventing "Jank" (frame drops) and ensuring 60 FPS performance.
+
+---
+
+### 1. The Rendering Pipeline
+To understand these concepts, you must know the browser's execution sequence:
+1. **JavaScript:** Handle logic/style changes.
+2. **Style (Recalculate):** Match CSS selectors to DOM elements.
+3. **Layout (Reflow):** Calculate geometry (size and position).
+4. **Paint (Repaint):** Fill in the pixels (colors, shadows, text).
+5. **Composite:** Layer the elements on the GPU.
+
+---
+
+### 2. Reflow (The "Layout" Phase)
+**The SDE 2 View:** Reflow is a **Geometric Calculation**. The browser must determine the exact coordinates and dimensions of every element.
+
+**Mechanics:**
+Reflow is "blocking" and computationally expensive because it is often a **Global Operation**. Because elements follow the "Box Model," changing the width of one `div` can shift its neighbors, which shifts their children, and so on. This is called the **Domino Effect**.
+
+*   **Triggers:**
+    *   Changing `width`, `height`, `margin`, `padding`.
+    *   Changing `font-size` or `font-family`.
+    *   Adding/Removing DOM nodes.
+    *   Resizing the window.
+    *   Calculating `offsetHeight` or `getBoundingClientRect()` via JS.
+
+---
+
+### 3. Repaint (The "Paint" Phase)
+**The SDE 2 View:** Repaint is a **Pixel Update**. It happens when the visual appearance of an element changes, but its geometry remains the same.
+
+**Mechanics:**
+While less expensive than Reflow (since no math/geometry is re-calculated), it still consumes CPU/GPU cycles to redraw the element's bitmap.
+
+*   **Triggers:**
+    *   `color`, `background-color`.
+    *   `visibility: hidden` (Note: `display: none` triggers a **Reflow**).
+    *   `outline`, `box-shadow`.
+
+---
+
+### 4. SDE 2 Deep Dive: Layout Thrashing
+This is a common performance bug where JS code forces the browser to perform multiple Reflows in a single frame.
+
+**The "Read-Write" Trap:**
+When you read a geometric property (like `offsetHeight`), the browser is forced to process any pending style changes and run a **Reflow** immediately to give you an accurate number. If you do this in a loop, you "thrash" the layout.
+
+```javascript
+// ❌ BAD: Layout Thrashing
+for (let i = 0; i < paragraphs.length; i++) {
+    // READ (forces reflow)
+    const width = container.offsetWidth; 
+    // WRITE (invalidates layout)
+    paragraphs[i].style.width = width + 'px'; 
+}
+
+// ✅ GOOD: Batching
+const width = container.offsetWidth; // Read once
+for (let i = 0; i < paragraphs.length; i++) {
+    paragraphs[i].style.width = width + 'px'; // Write all at once
+}
+```
+
+---
+
+### 5. How to Minimize Reflow & Repaint
+
+#### A. Use the "Compositor" (GPU Acceleration)
+Properties like `transform` (translate, scale, rotate) and `opacity` do not trigger Reflow OR Repaint. They happen in the **Composite** stage.
+- **Mechanics:** The browser takes the element, puts it on its own **GPU Layer**, and moves it without affecting the rest of the layout.
+
+```css
+/* ❌ Slow: Triggers Reflow every frame */
+.box { top: 10px; transition: top 1s; }
+
+/* ✅ Fast: Triggers only Compositing */
+.box { transform: translateY(10px); transition: transform 1s; }
+```
+
+#### B. Batch DOM Changes
+If you need to add 100 nodes, don't add them one by one. Use a `DocumentFragment`.
+- **Mechanics:** A fragment is an "off-screen" DOM. Adding nodes to it doesn't trigger a Reflow. When you append the fragment to the real DOM, it triggers only **one** Reflow.
+
+#### C. Change Styles via Classes
+Instead of changing 10 individual style properties via JS (triggering 10 potential recalculations), change a single class name. This allows the browser to optimize the style recalculation in one pass.
+
+#### D. Use `contain: strict`
+Modern CSS allows you to tell the browser: "The contents of this box will never affect the size of its parent." 
+- **Mechanics:** This creates a boundary. If a Reflow is triggered inside this element, the browser knows it doesn't need to re-calculate the rest of the page.
+
+---
+
+### 6. SDE 2 Decision Matrix
+
+| Action | Impact | Optimization |
+| :--- | :--- | :--- |
+| **Animating Position** | Reflow (High) | Use `transform: translate`. |
+| **Toggling Visibility** | Repaint (Med) | Use `opacity` if possible. |
+| **Updating Text Content** | Reflow (High) | Use `fixed` dimensions on the container to isolate. |
+| **Reading geometry in loop** | Thrashing (Fatal) | Batch reads, then batch writes. |
+
+### Summary
+*   **Reflow** is about **Math/Geometry** (Size, Position). It is expensive.
+*   **Repaint** is about **Pixels/Art** (Color, Shadows). It is moderate.
+*   **Minimization Strategy:** Move work to the **GPU (Composite phase)** using `transform`, batch DOM/Style updates, and avoid interleaved Read-Write cycles in JavaScript.

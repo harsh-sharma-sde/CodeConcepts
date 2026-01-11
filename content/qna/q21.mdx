@@ -1,0 +1,89 @@
+---
+title: Question 21 (Backend)
+description: Understand the differences between horizontal and vertical scaling, their trade-offs, and when to use each
+order: 88
+---
+
+To an SDE 2, scaling is a decision about **Resource Elasticity** and **System Topology**. The choice between Vertical and Horizontal defines how your architecture handles load, manages state, and survives failures.
+
+---
+
+### 1. Vertical Scaling (Scaling Up)
+**The SDE 2 View:** Vertical scaling is increasing the **capacity of a single node** (CPU, RAM, Disk). It is a "hardware-first" approach.
+
+**Mechanics:**
+- **The Ceiling:** You are limited by the physical capacity of the hardware (e.g., a motherboard can only hold so many sticks of RAM).
+- **Zero Latency:** Communication between application components is fast because it happens via **Inter-Process Communication (IPC)** or shared memory within the same kernel.
+- **State Management:** Simple. Since there is only one server, you can store sessions in local memory.
+- **Downtime:** Often requires a restart to "resize" the instance (though some cloud providers support "hot-swapping," it's risky).
+
+**Cloud Example:** Changing an AWS EC2 instance from a `t3.medium` (2 vCPU, 4GB RAM) to a `t3.large` (2 vCPU, 8GB RAM).
+
+---
+
+### 2. Horizontal Scaling (Scaling Out)
+**The SDE 2 View:** Horizontal scaling is adding **more nodes to the pool**. It is a "distributed systems" approach.
+
+**Mechanics:**
+- **The Load Balancer (LB):** A reverse proxy (Nginx, ALB) sits in front to distribute incoming traffic across the N nodes.
+- **Statelessness:** This is the #1 requirement. If Node A handles a request and Node B handles the next, they must share state (e.g., via a Redis cache or Database), otherwise, the user is logged out.
+- **Fault Tolerance:** If one node crashes, the system survives. This is the foundation of **High Availability (HA)**.
+- **Network Overhead:** Communication between nodes now happens over the network (TCP/HTTP), introducing latency and the risk of network partitions.
+
+**Architecture Example:** Using an **Auto-Scaling Group (ASG)** to spin up 5 identical Node.js containers during a traffic spike.
+
+---
+
+### 3. SDE 2 Comparison: The Mechanics
+
+| Feature | Vertical Scaling | Horizontal Scaling |
+| :--- | :--- | :--- |
+| **Complexity** | Low (Single node) | High (Requires LB, Service Discovery) |
+| **Resilience** | **SPOF** (Single Point of Failure) | Highly Available |
+| **Data Consistency** | Strong (Local) | Eventual (Distributed) |
+| **Cost** | Non-linear (High-end hardware is very expensive) | Linear (Pay for exactly what you use) |
+| **Limit** | Hard Hardware Ceiling | Theoretically Infinite |
+
+---
+
+### 4. Simple Code/Config Example: Horizontal Load Balancing
+
+To scale horizontally, you need an orchestrator (like Nginx) to route traffic.
+
+**Nginx Upstream Config:**
+```nginx
+# Define the pool of horizontal servers
+upstream my_app_servers {
+    server 10.0.0.1:3000; # Server A
+    server 10.0.0.2:3000; # Server B
+    server 10.0.0.3:3000; # Server C
+}
+
+server {
+    listen 80;
+    location / {
+        # The Load Balancer logic: Round Robin by default
+        proxy_pass http://my_app_servers;
+    }
+}
+```
+
+---
+
+### 5. SDE 2 Deep Dive: Scaling the Database
+Scaling the **App Layer** horizontally is easy (just add more Docker containers). Scaling the **Data Layer** is hard.
+
+1.  **Vertical DB Scaling:** Getting a bigger RDS instance. (Simplest, but has a limit).
+2.  **Horizontal DB Scaling (Read Replicas):** 1 Master for writes, 5 Replicas for reads.
+3.  **Horizontal DB Scaling (Sharding):** Splitting the database into "Shards" (e.g., Users A-M go to DB1, Users N-Z go to DB2). This is the most complex SDE 2 task.
+
+---
+
+### 6. SDE 2 Summary Checklist
+- **Can I scale this horizontally?** Only if I move the "State" (Sessions, Caches) out of the application memory and into a shared store like Redis.
+- **Is the cost non-linear?** If my single server is now costing me $2,000/month, I should probably switch to 10 smaller servers for $200/month (Horizontal).
+- **What is my MTTR (Mean Time to Recovery)?** If my single vertical server dies, my site is down until it reboots. If I have 3 horizontal servers and one dies, my site stays up.
+
+### Summary
+*   **Junior view:** Vertical is a bigger computer; horizontal is more computers.
+*   **SDE 2 view:** Vertical is about **Resource Concentration** (minimizing complexity); Horizontal is about **Distributed Resilience** (maximizing availability), requiring a **Stateless Architecture** and a **Load Balancing layer** to manage traffic.

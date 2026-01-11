@@ -1,0 +1,100 @@
+---
+title: Image Optimization
+description: Learn best practices for optimizing images in web applications for performance and SEO
+order: 53
+---
+
+To an SDE 2, **Image Optimization** is a multi-layered strategy to improve **Core Web Vitals**, specifically **LCP (Largest Contentful Paint)** and **CLS (Cumulative Layout Shift)**.
+
+It’s not just about "making files smaller"—it's about managing the **Network Payload**, the **Browser Decoding Time**, and **Memory Consumption**.
+
+---
+
+### 1. The Strategy: Modern Formats
+**The SDE 2 View:** Moving away from "Legacy" formats (JPEG/PNG) to "Next-Gen" formats that use superior compression algorithms (like intra-frame coding in video).
+
+*   **WebP:** ~30% smaller than JPEG. Supported by almost all modern browsers.
+*   **AVIF:** ~50% smaller than JPEG. Offers better detail preservation in high-compression scenarios but takes slightly longer for the CPU to decode.
+
+**Mechanics:** Use the `<picture>` tag to provide "Progressive Enhancement." The browser will pick the first format it supports.
+
+```html
+<picture>
+  <source srcset="image.avif" type="image/avif">
+  <source srcset="image.webp" type="image/webp">
+  <img src="image.jpg" alt="Description" width="800" height="450">
+</picture>
+```
+
+---
+
+### 2. Responsive Images (`srcset` and `sizes`)
+**The SDE 2 View:** Avoid the "Over-downloading" problem. Don't serve a 4000px wide image to a mobile phone with a 400px screen.
+
+**Mechanics:** 
+- **`srcset`**: A list of available image files and their physical widths (in `w` units).
+- **`sizes`**: Tells the browser how wide the image will be on the screen at different breakpoints.
+- **The Browser Engine:** Using this data, the browser calculates the **Device Pixel Ratio (DPR)** and picks the smallest file that will look sharp.
+
+```html
+<img 
+  src="small.jpg"
+  srcset="small.jpg 500w, medium.jpg 1000w, large.jpg 2000w"
+  sizes="(max-width: 600px) 480px, 800px"
+  alt="Responsive Image"
+/>
+```
+
+---
+
+### 3. SDE 2 Deep Dive: Decoding and Memory
+A common mistake is thinking only about file size. An image that is 1MB on disk might take up **60MB of RAM** once decoded.
+
+**The Math:** 
+Memory = `Width` x `Height` x `4 bytes` (for Red, Green, Blue, Alpha).
+If you serve a 4000x4000 image but display it as 400x400, the browser still has to:
+1.  Download the large file (Network cost).
+2.  Decompress it (CPU cost).
+3.  Store the full bitmap in RAM (Memory cost).
+4.  Downscale it to fit the UI (GPU/CPU cost).
+
+**SDE 2 Rule:** Always aim to serve images as close to their **Display Size** as possible.
+
+---
+
+### 4. Layout Stability (Preventing CLS)
+**The SDE 2 View:** Images are asynchronous. If you don't reserve space for them, the page will "jump" when they load, hurting your CLS score.
+
+**Mechanics:** Always provide `width` and `height` attributes. Modern browsers use these to calculate the **Aspect Ratio** before the image even starts downloading.
+
+```css
+/* Modern CSS approach */
+img {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9; /* Reserves the 16:9 box in the layout phase */
+  background-color: #f0f0f0; /* Visual placeholder */
+}
+```
+
+---
+
+### 5. Loading Strategies
+1.  **Lazy Loading:** Use native `loading="lazy"`. It uses the **Intersection Observer** internally to start the download only when the image is near the viewport.
+2.  **LQIP (Low-Quality Image Placeholder):** Serve a tiny 10px blurred Base64 string in the initial HTML. It gives the user an immediate "perceived" load while the high-res version is fetched.
+3.  **Priority Hints:** For the "Hero" image (the LCP element), use `fetchpriority="high"` to tell the browser to move this request to the front of the network queue.
+
+---
+
+### 6. Infrastructure: On-the-fly Transformation
+As an SDE 2, you don't manually resize images. You use an **Image CDN** (Cloudinary, Imgix) or an **S3 + Lambda Rewrite** architecture.
+
+**The URL Pattern:**
+`https://cdn.example.com/fetch/w_800,q_auto,f_webp/https://my-bucket.s3.com/photo.jpg`
+- `w_800`: Resize to 800px.
+- `q_auto`: Automatically determine the best quality-to-size ratio.
+- `f_webp`: Convert to WebP if the browser supports it.
+
+### Summary
+*   **Junior view:** Make the image smaller in Photoshop.
+*   **SDE 2 view:** It is a **Resource Management** problem. We optimize the **Network Payload** (Modern formats/Responsive sizes), the **Browser Performance** (Decoding/Memory efficiency), and the **Visual Stability** (Aspect ratios/Priority hints) to achieve a high-performance rendering path.

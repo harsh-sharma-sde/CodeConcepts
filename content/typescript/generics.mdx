@@ -1,0 +1,116 @@
+---
+title: TypeScript Generics
+description: Understand TypeScript generics for reusable and type-safe code with examples
+order: 8
+---
+
+To understand **Generics** as an SDE 2, you have to look at them as **Type Variables**. Just as functions use arguments as placeholders for values, Generics allow you to use placeholders for types.
+
+In TypeScript, Generics are a tool for the compiler to perform **Type Inference** and enforce **Structural Consistency** across different parts of your code without sacrificing type safety.
+
+---
+
+### 1. The Core Mechanic: Type Capture
+When you call a generic function, the TypeScript compiler "captures" the type of the argument you passed and locks it into a variable (usually `T`).
+
+**Mechanics:** Unlike the `any` type, which tells the compiler to stop checking, a Generic creates a **link** between input and output types.
+
+```typescript
+// 'any' loses information
+function getFirstAny(arr: any[]): any { return arr[0]; }
+
+// Generic 'T' captures information
+function getFirst<T>(arr: T[]): T {
+    return arr[0];
+}
+
+const num = getFirst([1, 2, 3]); // T is inferred as 'number'. 'num' is now 'number'.
+const str = getFirst(["a", "b"]); // T is inferred as 'string'. 'str' is now 'string'.
+```
+
+---
+
+### 2. SDE 2 Deep Dive: Generic Constraints (`extends`)
+A common requirement is to use a generic but ensure that the type passed has certain properties. We use the `extends` keyword to define a **minimum required shape**.
+
+**Mechanics:** This is known as **Bounded Polymorphism**. The compiler checks if the passed type is a "subtype" of the constraint.
+
+```typescript
+interface Lengthwise {
+    length: number;
+}
+
+// T must have at least a .length property
+function logLength<T extends Lengthwise>(item: T): number {
+    return item.length;
+}
+
+logLength("Hello");       // Works (string has .length)
+logLength([1, 2, 3]);    // Works (Array has .length)
+logLength({ length: 10 }); // Works (Object has .length)
+// logLength(5);          // Error! Number doesn't have .length
+```
+
+---
+
+### 3. Under the Hood: Type Erasure
+As an SDE 2, you must remember that **Generics do not exist at runtime**.
+
+**Mechanics:** JavaScript has no concept of generics. The TypeScript compiler performs **Type Erasure**. After checking for errors, it strips all `<T>` syntax and converts it into standard JavaScript. 
+
+*   In Java, Generics can involve "Type Reification" (sometimes). 
+*   In C++, Templates generate new code for every type used. 
+*   **In TS, there is only one version of the function in the final JS bundle.**
+
+---
+
+### 4. Advanced Pattern: Mapped Types & Generics
+SDE 2s often use generics to transform data structures. One powerful tool is combining generics with `keyof`.
+
+```typescript
+function getProperty<T, K extends keyof T>(obj: T, key: K) {
+    return obj[key];
+}
+
+const user = { id: 1, name: "Alice", email: "a@b.com" };
+
+// Compiler knows the return type is 'string' because 'name' is a string in user.
+const name = getProperty(user, "name"); 
+
+// getProperty(user, "address"); // Error! "address" is not a key of 'user'.
+```
+
+---
+
+### 5. Using Generics with Classes & Interfaces
+Generics are vital for creating reusable data structures (like a Repository pattern or a Response wrapper).
+
+```typescript
+interface ApiResponse<T> {
+    data: T;
+    status: number;
+    error?: string;
+}
+
+interface User {
+    username: string;
+}
+
+// Reusing the same structure for different data types
+const userResponse: ApiResponse<User> = {
+    data: { username: "sde_pro" },
+    status: 200
+};
+```
+
+---
+
+### 6. When to use Generics vs. Union Types?
+This is a common SDE 2 architectural decision:
+
+-   **Use Union Types (`string | number`)** when the logic inside the function needs to branch based on the type (e.g., `if (typeof x === 'string')`).
+-   **Use Generics (`T`)** when the logic is exactly the same regardless of the type, and you simply want to pass that type through to the output or another function.
+
+### Summary
+*   **Junior view:** It's a way to make functions work with any type.
+*   **SDE 2 view:** Generics are **Type-level variables** that allow for **Static Type Tracking** across your application. They enable the creation of polymorphic components that maintain **Structural Integrity** while being completely erased during the transpilation to JavaScript.

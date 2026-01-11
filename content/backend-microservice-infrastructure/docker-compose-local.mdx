@@ -1,0 +1,97 @@
+---
+title: Docker Compose for Local Development
+description: Learn how to use Docker Compose to run multi-container applications locally with best practices
+order: 84
+---
+
+To an SDE 2, **Docker Compose** is a **Local Orchestrator**. It allows you to define a multi-container microservice environment as a single declarative "Source of Truth." 
+
+Its primary value is providing **Environment Parity**: ensuring that every developer on the team is running the exact same versions of databases, caches, and services, connected via the same network topology.
+
+---
+
+### 1. The Under-the-Hood Mechanic: The Default Network
+**The SDE 2 View:** When you run `docker-compose up`, Docker creates a **Dedicated Bridge Network** for that project. 
+
+**Mechanics:**
+- **Service Discovery:** Every container in the `docker-compose.yml` can talk to others using their **Service Name** as the hostname. 
+- **Internal DNS:** Docker runs an embedded DNS server. When your App container looks up `http://db`, the DNS resolver returns the internal IP of the Database container (e.g., `172.21.0.3`).
+- **Isolation:** This network is isolated from your host's `localhost`. You only "expose" ports to your laptop that you explicitly need to access (like the Web UI).
+
+---
+
+### 2. SDE 2 Strategy: Volume Mapping (Hot Reloading)
+For local dev, we don't want to re-build the image every time we change a line of code. We use **Bind Mounts**.
+
+**Mechanics:**
+- We map the project folder on our laptop directly into the container.
+- When you save a file in VS Code, the change is instantly reflected inside the running container. 
+- Your local "watch" process (like `nodemon` or `webpack-dev-server`) detects the change and restarts the app process **inside** the container.
+
+---
+
+### 3. Machine Coding Example: A Standard Stack
+
+```yaml
+services:
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+    # SDE 2 Trick: Map local code for Hot Reloading
+    volumes:
+      - .:/app
+      - /app/node_modules # Anonymous volume to protect container-side modules
+    environment:
+      - DATABASE_URL=postgres://user:pass@db:5432/mydb
+    # Ensure DB is ready before starting the app
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=pass
+      - POSTGRES_DB=mydb
+    # Persist DB data even if container is deleted
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d mydb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+```
+
+---
+
+### 4. SDE 2 Deep Dive: `depends_on` vs. `healthcheck`
+**The Problem:** In many junior setups, the App container starts, tries to connect to the DB, and crashes because the DB is still "booting up."
+- **`depends_on` (Basic):** Only ensures the DB **container** has started. It doesn't care if the Postgres process inside is actually ready to accept connections.
+- **The SDE 2 Solution:** Use a `healthcheck`. The App container will wait in a "Created" state until the DB's healthcheck returns `success`.
+
+---
+
+### 5. Performance: I/O Bottlenecks (Mac/Windows)
+As an SDE 2, you know that Docker on Mac/Windows runs inside a lightweight Linux VM. 
+- **The Problem:** Syncing thousands of files (like `node_modules`) between the Host (Mac) and the Guest (Linux) via Bind Mounts is extremely slow due to the filesystem bridge (gRPC FUSE or VirtioFS).
+- **The Optimization:** 
+    1.  **Anonymous Volumes:** Use `- /app/node_modules` in your YAML. This tells Docker to keep the `node_modules` inside the Linux VM's native filesystem, bypassing the slow host-to-guest sync.
+    2.  **Mutagen:** For very large projects, use Mutagen to sync files via high-speed network streams instead of standard mounts.
+
+---
+
+### 6. SDE 2 Summary Checklist
+1.  **Environment Variables:** Use an `.env` file for secrets/configs; Docker Compose picks this up automatically.
+2.  **Naming:** Use `container_name` if you need easy access via CLI, but rely on service names for internal networking.
+3.  **Persistence:** Always use **Named Volumes** for databases so your data survives a `docker-compose down`.
+4.  **Cleaning:** Use `docker-compose down -v` to wipe the environment *and* the volumes for a truly fresh start.
+
+### Summary
+*   **Junior view:** It's a tool to run my frontend and backend together.
+*   **SDE 2 view:** It is a **Service Orchestrator** that manages **Internal DNS Discovery**, provides **Filesystem Hot-Reloading** via Bind Mounts, and ensures **Boot-order Integrity** using healthchecks and dependency conditions.

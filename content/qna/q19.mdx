@@ -1,0 +1,102 @@
+---
+title: Question 19 (Web Vital)
+description: Understand what the network waterfall effect is, why it hurts performance, and how to eliminate it
+order: 71
+---
+
+To an SDE 2, a **Waterfall** is a **Serial Dependency Chain** in the network layer. It occurs when a resource (or API call) cannot be "discovered" or initiated until a previous resource has finished downloading, parsing, and executing.
+
+In a performance timeline (like Chrome DevTools), this looks like a staircase. Your goal is to "flatten" the waterfall into a **Parallel Burst**.
+
+---
+
+### 1. The Anatomy of a Waterfall
+There are two main types of waterfalls that an SDE 2 must identify:
+
+#### A. The Discovery Waterfall (Static Assets)
+The browser doesn't know what it doesn't see.
+1.  **HTML** arrives.
+2.  Browser parses HTML, finds **CSS**.
+3.  Browser downloads CSS, parses it, finds a **Font** (defined via `@font-face`).
+4.  **Result:** The font download only starts *after* the CSS is fully processed.
+
+#### B. The Data Waterfall (API/React)
+This is common in component-based architectures ("Fetch-on-Render").
+1.  `<Parent />` mounts and calls `fetchUser()`.
+2.  `fetchUser` resolves 500ms later.
+3.  `<Parent />` renders `<Child userId={data.id} />`.
+4.  `<Child />` mounts and calls `fetchPosts(userId)`.
+5.  **Result:** The total time is the **sum** of both requests.
+
+---
+
+### 2. SDE 2 Code Example: Fixing the Data Waterfall
+
+#### ❌ The Bad Pattern: Nested Fetching
+```jsx
+function UserProfile() {
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    fetch('/api/user').then(res => setUser(res.data));
+  }, []);
+
+  if (!user) return <Spinner />;
+
+  // The 'Posts' request is 'blocked' until 'user' arrives
+  return <UserPosts userId={user.id} />;
+}
+```
+
+#### ✅ The SDE 2 Fix: Parallelization (Promise.all)
+If the IDs are known or can be fetched simultaneously, move the requests "Upstream" to the parent or a router.
+
+```jsx
+// Fetch both in parallel
+useEffect(() => {
+  const [userPromise, postsPromise] = [fetch('/api/user'), fetch('/api/posts')];
+  
+  Promise.all([userPromise, postsPromise]).then(([user, posts]) => {
+    setState({ user, posts });
+  });
+}, []);
+```
+
+---
+
+### 3. SDE 2 Strategy: Flattening the Asset Waterfall
+
+#### A. Preloading (Breaking the Discovery Chain)
+If a font is defined in a CSS file, use a `link rel="preload"` in the HTML.
+- **Under the hood:** This informs the **Preload Scanner** about the font immediately, allowing the browser to download the CSS and the Font in **parallel**.
+
+#### B. HTTP/2 and HTTP/3 Multiplexing
+In HTTP/1.1, the browser could only handle 6 concurrent requests per domain. This created a physical waterfall.
+- **SDE 2 View:** In **HTTP/2/3**, we have a single connection with multiple streams. We can "push" or "multiplex" dozens of assets at once. We avoid "Domain Sharding" (the old trick of using `static1.cdn.com`, `static2.cdn.com`) because it adds DNS/TCP handshake overhead.
+
+#### C. HTTP 103 Early Hints
+This is the "Pro" SDE 2 optimization.
+1.  User requests `index.html`.
+2.  The server takes 300ms to generate the HTML (DB queries).
+3.  Instead of staying silent, the server sends an **Early Hint (103)** response: *"Hey browser, while I'm working on the HTML, you're definitely going to need `main.css` and `hero.jpg`. Start downloading them now!"*
+4.  The browser starts the downloads while the server is still thinking.
+
+---
+
+### 4. SDE 2 Deep Dive: The "Request Discovery" Gap
+When auditing a waterfall, look for the "Gap"—the empty space between the end of Request A and the start of Request B.
+
+- **If the gap is large:** Your JavaScript is likely doing heavy processing or waiting for a React re-render before triggering the next fetch.
+- **The Fix:** Move the fetch logic out of `useEffect` and into the **Route Loader** (e.g., Next.js `getServerSideProps` or React Router `loader`). This ensures fetching starts as soon as the URL changes, not when the component mounts.
+
+---
+
+### 5. SDE 2 Summary Checklist
+1.  **Parallelize API Calls:** Use `Promise.all` or GraphQL to fetch related data in one go.
+2.  **Resource Hints:** Use `preload` for "hidden" assets (fonts, background images).
+3.  **Route-based Fetching:** Fetch data at the **Router level**, not the **Component level**, to avoid "Fetch-on-render" waterfalls.
+4.  **Avoid Chained Dependencies:** Minimize the depth of your dependency tree (e.g., `Config -> Auth -> User -> Preferences`).
+
+### Summary
+*   **Junior view:** It’s when things load one after another.
+*   **SDE 2 view:** A waterfall is an **Inefficiency in the Critical Discovery Path**. We fix it by **Decoupling Resource Discovery** from **Execution Logic**, using **Multiplexing**, **Resource Hints**, and **Upstream Data Prefetching** to maximize network concurrency.

@@ -1,0 +1,94 @@
+---
+title: CSS Specificity
+description: Understand how CSS specificity works, how styles are applied, and how to resolve conflicts
+order: 36
+---
+
+To an SDE 2, **CSS Specificity** is the algorithm used by the browser's rendering engine (e.g., Blink, WebKit) to determine which CSS rule "wins" when multiple rules target the same element. 
+
+It is a **weighting system** applied during the **CSSOM (CSS Object Model)** construction phase. If you don't manage it, you end up in a "Specificity War" where you're forced to use `!important`, which is a sign of architectural debt.
+
+---
+
+### 1. The Scoring System (The 3-Column Vector)
+Think of specificity as a vector: `(ID, Class, Element)`. The browser compares these columns from left to right. A `1` in the ID column always beats any number in the Class column.
+
+1.  **ID Selectors** (`#header`): High weight `(1, 0, 0)`.
+2.  **Class / Attribute / Pseudo-class Selectors** (`.btn`, `[type="text"]`, `:hover`): Medium weight `(0, 1, 0)`.
+3.  **Element / Pseudo-element Selectors** (`div`, `::before`): Low weight `(0, 0, 1)`.
+
+**Note:** **Inline Styles** (e.g., `<div style="...">`) live in an even higher category `(1, 0, 0, 0)`, effectively overriding anything in your CSS files.
+
+---
+
+### 2. Under the Hood: The Comparison Algorithm
+When the browser's CSS engine matches selectors to an element, it calculates a numerical score.
+
+```css
+/* Score: (0, 0, 1) */
+div { color: red; }
+
+/* Score: (0, 1, 1) - Class + Element */
+.container div { color: blue; }
+
+/* Score: (1, 0, 0) - ID wins everything above */
+#main { color: green; }
+
+/* Score: (1, 0, 1) - ID + Element beats just ID */
+#main div { color: yellow; }
+```
+
+**The Tie-breaker (The Cascade):**
+If two selectors have the **exact same specificity score**, the one that appears **last in the source code** wins.
+
+---
+
+### 3. SDE 2 Deep Dive: Modern Selectors (`:is`, `:where`)
+Modern CSS introduces functions that manipulate specificity calculation, which is vital for library authors.
+
+*   **`:is()`**: The specificity is determined by its **most specific argument**.
+*   **`:where()`**: The specificity is **always 0**. 
+
+```css
+/* This selector has a weight of (1, 0, 0) because of #id */
+:is(button, #id) { color: red; }
+
+/* This selector has a weight of (0, 0, 0) regardless of what's inside */
+:where(button, #id) { color: blue; }
+```
+**SDE 2 Strategy:** Use `:where()` for base styles or resets in a design system so that consumers of your components can easily override them without fighting high specificity.
+
+---
+
+### 4. The `!important` Nuclear Option
+`!important` is not part of the specificity score. It is a separate flag that tells the engine to move this declaration to a **higher-priority bucket** in the cascade. 
+*   It breaks the natural flow of the CSSOM.
+*   The only thing that overrides `!important` is another `!important` with higher specificity or a later position in the code.
+
+---
+
+### 5. Architectural Implications: Why "BEM"?
+The **BEM (Block Element Modifier)** methodology exists largely to flatten the specificity tree. 
+
+**Bad (High Specificity):**
+```css
+/* (0, 3, 1) - Hard to override elsewhere */
+.nav .menu .item a { ... }
+```
+
+**Good (BEM - Low Specificity):**
+```css
+/* (0, 1, 0) - Flat and predictable */
+.nav__link { ... }
+```
+By keeping all selectors at a single class level `(0, 1, 0)`, you ensure that the **Source Order** (The Cascade) handles overrides, making the CSS much easier to maintain.
+
+---
+
+### 6. Tailwind & CSS-in-JS Perspective
+*   **Tailwind:** Works by generating thousands of simple class selectors `(0, 1, 0)`. Since they all have the same specificity, the order in which Tailwind generates the final CSS file is critical.
+*   **MUI / Emotion:** Generates unique class names. It manages specificity by injecting `<style>` tags into the `<head>` in a specific order, ensuring that component-level styles override theme-level styles.
+
+### Summary
+*   **Junior view:** IDs beat classes, and `!important` fixes everything.
+*   **SDE 2 view:** Specificity is a **Vector-based Priority Algorithm**. We aim for **Flat Specificity** (using BEM or Utility classes) to allow the **Cascade** (source order) to work correctly, and we use tools like `:where()` to build highly overridable design system foundations.

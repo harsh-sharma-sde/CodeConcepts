@@ -1,0 +1,108 @@
+---
+title: Component Library Architecture
+description: Learn how to design a scalable and maintainable React component library with best practices
+order: 54
+---
+
+To an SDE 2, a **Component Library** is not just a collection of UI elements; it is a **Software Development Kit (SDK)** for the UI. It provides a shared language between designers and developers through **Design Tokens** and ensures application stability through **Encapsulated Logic**.
+
+---
+
+### 1. The Foundation: Design Tokens
+**The SDE 2 View:** A design system should have a single source of truth for "primitive" values (colors, spacing, shadows). We store these as **Design Tokens** (usually in JSON) and transform them into CSS Variables or JS Constants.
+
+**Mechanics:**
+By using tokens, if the brand changes its "Primary Blue," you update one JSON file, and the entire ecosystem (Web, iOS, Android) updates automatically.
+
+```json
+{
+  "spacing": { "small": "4px", "medium": "8px" },
+  "colors": { "primary": "#007bff" }
+}
+```
+
+---
+
+### 2. API Design: Composition over Configuration
+**The SDE 2 View:** Avoid "God Components"—components with 50+ props (`isLoading`, `hasIcon`, `iconPosition`, etc.). These are hard to maintain and lack flexibility. Instead, use **Compound Components** or **Slot Patterns**.
+
+**Mechanics:** Use the **Context API** to share state between a parent and its children, allowing the consumer to decide the order and structure of the UI.
+
+#### Code Example: Compound Component (Accordion)
+```jsx
+// Library Side: Accordion logic
+const AccordionContext = React.createContext();
+
+export const Accordion = ({ children }) => {
+  const [openId, setOpenId] = React.useState(null);
+  return (
+    <AccordionContext.Provider value={{ openId, setOpenId }}>
+      <div className="border rounded">{children}</div>
+    </AccordionContext.Provider>
+  );
+};
+
+export const AccordionItem = ({ id, title, children }) => {
+  const { openId, setOpenId } = React.useContext(AccordionContext);
+  const isOpen = openId === id;
+
+  return (
+    <div className="border-b">
+      <button onClick={() => setOpenId(isOpen ? null : id)} className="p-4 w-full text-left">
+        {title}
+      </button>
+      {isOpen && <div className="p-4 bg-gray-50">{children}</div>}
+    </div>
+  );
+};
+
+// Consumer Side: Flexible structure
+// <Accordion>
+//   <AccordionItem id="1" title="Section 1">Content</AccordionItem>
+// </Accordion>
+```
+
+---
+
+### 3. SDE 2 Deep Dive: Headless Components
+**The SDE 2 View:** Separate **Behavior** from **Presentation**. Many SDE 2s use "Headless" libraries (like `Radix UI` or `React Aria`) that handle the complex logic (keyboard navigation, ARIA roles) while leaving the styling to the consumer.
+
+**The Logic:**
+- **Logic:** Handling `ArrowDown` to move focus. (Hard to write/test).
+- **Presentation:** Making it look like a rounded blue box. (Easy to write).
+
+---
+
+### 4. Accessibility & The A11y Tree
+**The SDE 2 View:** Components must be "Accessible by Default."
+- Use `forwardRef` to allow consumers to access the underlying DOM node (for focus management).
+- Use `aria-*` attributes and proper semantic HTML.
+- Ensure every interactive element has a focus state.
+
+```jsx
+// Always use forwardRef for library components
+export const Button = React.forwardRef(({ children, ...props }, ref) => (
+  <button ref={ref} {...props} className="px-4 py-2 bg-blue-500 text-white rounded">
+    {children}
+  </button>
+));
+```
+
+---
+
+### 5. Distribution: Tree Shaking & ESM
+**The SDE 2 View:** A library shouldn't bloat the consumer's app. 
+- **ESM (ECMAScript Modules):** Publish the library in ESM format to allow the consumer's build tool (Vite/Webpack) to perform **Tree Shaking** (removing unused components from the final bundle).
+- **Side Effects:** Set `"sideEffects": false` in `package.json` to tell the bundler that your components are pure and safe to remove if unused.
+
+---
+
+### 6. Developer Experience (DX) & Tooling
+As an SDE 2, you build for other developers:
+1.  **Storybook:** An isolated environment to document and test components in all their states (Loading, Error, Mobile).
+2.  **Chromatic/Visual Testing:** Automatically detect UI regressions by comparing snapshots of components in CI.
+3.  **Semantic Versioning (SemVer):** A `major` version bump must only happen if you change the API (props) in a way that breaks existing code.
+
+### Summary
+*   **Junior view:** It's a bunch of buttons and inputs in a folder.
+*   **SDE 2 view:** It is a **Themed SDK** that utilizes **Compound Component patterns** and **Headless logic** to ensure **Accessibility** and **Bundle Optimization**, managed via a strict **CI/CD pipeline** with visual regression testing.

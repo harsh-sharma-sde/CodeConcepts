@@ -1,0 +1,122 @@
+---
+title: Question 3 (JS & TS)
+description: Learn how to implement custom versions of `Promise.all` and a retry mechanism for promises
+order: 15
+---
+
+To an SDE 2, implementing these isn't just about making the code work—it's about handling **concurrency**, **order of execution**, and **resource management**.
+
+---
+
+### 1. Custom `Promise.all`
+**The SDE 2 View:** `Promise.all` is a concurrency aggregator. The two critical requirements are:
+1.  **Order Preservation:** The result array must match the input array order, regardless of which promise resolves first.
+2.  **Short-circuiting:** If any promise fails, the main promise must reject immediately without waiting for the others.
+
+**Mechanics:**
+- We use a counter to track completion because `results.length` is unreliable (assigning to `results[5]` makes the length 6 even if indices 0-4 are empty).
+- We wrap every input in `Promise.resolve()` to handle non-promise values (primitives).
+
+```javascript
+function myPromiseAll(promises) {
+    return new Promise((resolve, reject) => {
+        const results = [];
+        let completedCount = 0;
+
+        // Edge case: Empty array resolves immediately
+        if (promises.length === 0) {
+            return resolve([]);
+        }
+
+        promises.forEach((promise, index) => {
+            // Handle both promises and non-promise values
+            Promise.resolve(promise)
+                .then((value) => {
+                    results[index] = value; // Preserve index order
+                    completedCount++;
+
+                    // Check if all are done
+                    if (completedCount === promises.length) {
+                        resolve(results);
+                    }
+                })
+                .catch((err) => {
+                    // Short-circuit on first rejection
+                    reject(err);
+                });
+        });
+    });
+}
+
+// Usage
+myPromiseAll([Promise.resolve(1), 2, Promise.resolve(3)])
+    .then(console.log); // [1, 2, 3]
+```
+
+---
+
+### 2. Custom `Promise.retry`
+**The SDE 2 View:** `Promise.retry` is a resilience pattern. Since it's not native to the JS spec, a professional implementation should support:
+1.  **Attempt Limit:** Max number of retries.
+2.  **Delay/Backoff:** Waiting between retries to avoid overwhelming a failing service.
+
+**Mechanics:**
+- We use an internal recursive function or a loop to re-execute the logic.
+- We "await" a timeout promise to create the delay.
+
+```javascript
+/**
+ * @param {Function} fn - The async function to retry
+ * @param {number} retries - Number of attempts
+ * @param {number} delay - Time to wait between retries (ms)
+ */
+async function promiseRetry(fn, retries = 3, delay = 1000) {
+    try {
+        // Attempt to execute the function
+        return await fn();
+    } catch (error) {
+        // If we have no retries left, throw the final error
+        if (retries <= 1) {
+            throw error;
+        }
+
+        console.log(`Retrying... attempts left: ${retries - 1}`);
+
+        // Wait for the specified delay (Promisified setTimeout)
+        await new Promise(resolve => setTimeout(resolve, delay));
+
+        // Recursively call with one less retry
+        return promiseRetry(fn, retries - 1, delay);
+    }
+}
+
+// Usage Example: Simulated unstable API
+let count = 0;
+const unstableTask = async () => {
+    count++;
+    if (count < 3) throw new Error("Server Down");
+    return "Success!";
+};
+
+promiseRetry(unstableTask, 4, 500)
+    .then(console.log)
+    .catch(console.error);
+```
+
+---
+
+### SDE 2 Deep Dive: Design Decisions
+
+#### Why `results[index] = value` and not `results.push(value)`?
+In `Promise.all`, tasks run in parallel. A promise at index 1 might take 10 seconds, while index 2 takes 1 second. Using `.push()` would swap their positions in the result array, breaking the API contract. Mapping by index ensures the data structure remains predictable.
+
+#### Why `Promise.resolve(promise)`?
+The input to `Promise.all` can be `[Promise.resolve(1), 5, "Hello"]`. Passing the number `5` directly to `.then()` would fail. `Promise.resolve(5)` wraps the primitive in a resolved promise, allowing the rest of our logic to remain consistent and generic.
+
+#### The "Exponential Backoff" (Advanced)
+A true SDE 2 implementation of `retry` in a production system (like an AWS SDK) would use **Exponential Backoff** (e.g., `delay * 2` for each attempt). This prevents a "Thundering Herd" problem where multiple clients retry simultaneously and keep a struggling server down. 
+
+```javascript
+// Simple Backoff logic change:
+return promiseRetry(fn, retries - 1, delay * 2);
+```

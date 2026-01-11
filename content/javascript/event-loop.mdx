@@ -1,0 +1,119 @@
+---
+title: JavaScript Event Loop (Microtasks vs Macrotasks)
+description: Deep dive into the JavaScript Event Loop, task queues, and execution order for SDE-2 interviews
+order: 3
+---
+
+To understand the Event Loop at an SDE 2 level, you have to move past "it's how JS handles async" and look at it as a **scheduling algorithm** that manages the transition between the **V8 Engine** and the **Host Environment** (Browser or Node.js).
+
+---
+
+### 1. The Architecture
+JavaScript is single-threaded, but the **Host Environment** (Browser/Node) is multi-threaded. 
+- **V8** handles the Stack and Heap.
+- **Libuv (Node) / Web APIs (Browser)** handle the heavy lifting (timers, network, file I/O).
+
+The Event Loop is the bridge. It decides which callback gets pushed onto the **Call Stack** next.
+
+---
+
+### 2. Microtasks vs. Macrotasks (The Priority Rule)
+
+Not all asynchronous tasks are equal. They are categorized into two queues with different "draining" behaviors.
+
+#### Macrotasks (Task Queue)
+- **Examples:** `setTimeout`, `setInterval`, `setImmediate` (Node), I/O, UI Rendering.
+- **Logic:** The Event Loop picks **exactly one** macrotask from the queue, executes it, and then moves on to check the Microtask queue.
+
+#### Microtasks (Job Queue)
+- **Examples:** `Promise.then/catch/finally`, `await` (under the hood), `MutationObserver`, `queueMicrotask`.
+- **Logic:** This queue has higher priority. The Event Loop will not move to the next Macrotask until the Microtask queue is **completely empty**. 
+
+**Crucial Mechanic:** If a Microtask schedules *another* Microtask, it is added to the end of the current queue and executed in the **same tick**. This can lead to **Main Thread Starvation**.
+
+---
+
+### 3. The Event Loop "Tick" Order
+For an SDE 2, this sequence is vital for debugging race conditions:
+
+1.  **Execute Synchronous Code:** Run the Call Stack until it is empty.
+2.  **Process All Microtasks:** Drain the Microtask queue completely (including tasks added during this phase).
+3.  **Render Pipeline (Browser only):** Check if a UI repaint is needed (usually every 16.6ms for 60fps).
+4.  **Process One Macrotask:** Pick the oldest task from the Macrotask queue.
+5.  **Repeat.**
+
+---
+
+### 4. Code Example: Predicting the Output
+
+```javascript
+console.log("1. Script Start"); // Synchronous
+
+setTimeout(() => {
+    console.log("2. setTimeout (Macrotask)");
+}, 0);
+
+Promise.resolve().then(() => {
+    console.log("3. Promise 1 (Microtask)");
+}).then(() => {
+    console.log("4. Promise 2 (Microtask)");
+});
+
+queueMicrotask(() => {
+    console.log("5. queueMicrotask (Microtask)");
+});
+
+console.log("6. Script End"); // Synchronous
+```
+
+#### The Execution Flow:
+1. **Sync Phase:** Logs `1` and `6`. `setTimeout` is sent to the Timer API. Promises are sent to the Microtask queue.
+2. **Microtask Phase:** The stack is empty. The loop looks at the Microtask queue.
+   - Executes `3`.
+   - Executes `5`.
+   - The `.then` of `3` was just added to the queue, so it executes `4` **now**.
+3. **Macrotask Phase:** The Microtask queue is now empty. The loop picks the `setTimeout` callback.
+   - Executes `2`.
+
+**Output:** `1, 6, 3, 5, 4, 2`
+
+---
+
+### 5. SDE 2 Deep Dive: Starvation & Performance
+
+#### The "Infinite Microtask" Trap
+Because the Event Loop drains the entire Microtask queue before moving on, you can accidentally freeze the UI or I/O.
+
+```javascript
+// This will freeze the browser/server! 
+// The Event Loop will never reach the 'Render' phase or Macrotasks.
+function infiniteMicrotask() {
+    Promise.resolve().then(infiniteMicrotask);
+}
+```
+Contrast this with `setTimeout`:
+```javascript
+// This will NOT freeze the browser.
+// Each call is a separate Macrotask, allowing the loop to breathe.
+function safeRecursive() {
+    setTimeout(safeRecursive, 0);
+}
+```
+
+#### Why `await` is a Microtask
+When you `await` a promise, the engine literally pauses the execution of that function, saves the local variables in the **Stack Frame** (moved to the Heap), and schedules the remainder of the function as a **Microtask** to be run once the promise resolves.
+
+#### Why `0ms` isn't `0ms`
+In browsers, `setTimeout(..., 0)` usually has a minimum delay of 4ms-10ms due to the spec and power-saving. Furthermore, it only runs *after* every single Microtask is cleared. If your Microtask queue takes 200ms to process, your `setTimeout(..., 0)` will take at least 200ms.
+
+---
+
+### Summary Table for SDE 2
+
+| Feature | Microtasks | Macrotasks |
+| :--- | :--- | :--- |
+| **Owner** | V8 Engine | Host Environment (Browser/Node/Libuv) |
+| **Priority** | High (Immediate) | Low |
+| **Queue Draining** | Full queue (until empty) | One task at a time |
+| **Common Use** | State updates, Promise logic | Timers, Network I/O, UI |
+| **Can Starve I/O?** | **Yes** | No |

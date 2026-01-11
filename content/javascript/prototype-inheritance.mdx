@@ -1,0 +1,102 @@
+---
+title: JavaScript Prototypal Inheritance
+description: Understand how JavaScript uses prototypes for inheritance with clear examples and interview-focused insights
+order: 4
+---
+
+For an SDE 2, the key is to stop thinking about "Classes" and start thinking about **Objects delegating to other Objects.** 
+
+In languages like Java or C++, inheritance is a **blueprint copy**: when you instantiate a class, the methods are "copied" (conceptually) into the new instance. In JavaScript, nothing is copied. Instead, a **link** is created.
+
+---
+
+### 1. The Core Mechanic: Delegation
+Every object in JavaScript has a hidden internal property called `[[Prototype]]`. 
+When you try to access a property or method on an object:
+1.  The engine looks at the **Object itself**.
+2.  If not found, it follows the `[[Prototype]]` link to the **Parent Object**.
+3.  It continues up this "Prototype Chain" until it either finds the property or reaches `null` (the end of the chain).
+
+**SDE 2 Insight:** This is **Live Delegation**. If you add a method to a prototype *after* an object is created, the object immediately has access to that method because the link is dynamic.
+
+---
+
+### 2. The Confusion: `prototype` vs `__proto__`
+This is a frequent interview trap.
+- **`__proto__` (or `Object.getPrototypeOf`)**: This is the property on the **instance**. It points to the object it inherits from.
+- **`prototype`**: This is a property only on **Functions**. it is the object that will be assigned as the `__proto__` to any instances created with the `new` keyword.
+
+---
+
+### 3. Code Example: Under the Hood
+
+```javascript
+// The SDE 2 way: Understanding the link
+const animal = {
+    eat: true,
+    walk() {
+        console.log("Animal walking...");
+    }
+};
+
+const dog = Object.create(animal); // Manually set dog.[[Prototype]] = animal
+dog.bark = function() { console.log("Woof!"); };
+
+dog.walk(); // "Animal walking..."
+// 1. Does 'dog' have 'walk'? No.
+// 2. Follow __proto__ to 'animal'. Does 'animal' have 'walk'? Yes.
+```
+
+#### Modern "Class" Sugar
+Even when using `class`, the engine is doing exactly the same thing:
+
+```javascript
+class Parent {
+    greet() { return "Hi"; }
+}
+
+class Child extends Parent {}
+
+const kid = new Child();
+
+// Verification of the chain:
+console.log(Object.getPrototypeOf(kid) === Child.prototype); // true
+console.log(Object.getPrototypeOf(Child.prototype) === Parent.prototype); // true
+```
+
+---
+
+### 4. V8 Internal Optimization: Hidden Classes (Shapes)
+As an SDE 2, you should know how the engine makes this fast. Searching a linked list every time you call a method would be slow.
+
+1.  **Hidden Classes:** V8 assigns a "Shape" to objects. If you have 1000 objects sharing the same prototype, V8 notes that they all share the same structure.
+2.  **Inline Caching (IC):** The first time `dog.walk()` is called, V8 performs the full chain lookup. It then **caches the memory offset** of the `walk` function.
+3.  The next time `dog.walk()` is called, V8 skips the lookup entirely and jumps straight to the memory address.
+
+---
+
+### 5. Performance & Memory: The SDE 2 Trade-offs
+
+#### Pros:
+- **Memory Efficiency:** You can have 1 million `Dog` instances, but the `bark()` method exists only **once** in memory (on the prototype).
+- **Dynamic Extension:** You can patch built-in prototypes (Polyfilling) to add functionality to all existing instances.
+
+#### Cons:
+- **Lookup Overhead:** Very deep prototype chains (e.g., 10+ levels) can cause a performance hit if the engine misses the Inline Cache.
+- **The `for...in` Trap:** This loop iterates over **all** enumerable properties in the chain. You must use `Object.hasOwn()` or `hasOwnProperty()` to filter out inherited properties.
+
+---
+
+### 6. The "Base Case": `Object.create(null)`
+Sometimes as an SDE 2, you want a "Pure Map" that doesn't have any of the default Object methods (like `toString` or `valueOf`).
+
+```javascript
+const cleanObj = Object.create(null);
+console.log(cleanObj.toString); // undefined
+// This object has NO prototype. It is the start of its own chain.
+```
+This is often used in library development (like Redux or Express) to prevent property collisions with built-in Object methods.
+
+### Summary
+*   **Junior view:** It’s how `extends` works.
+*   **SDE 2 view:** It is a memory-efficient **delegation chain** of objects linked via `[[Prototype]]`, optimized by V8 using **Hidden Classes** and **Inline Caching**, where methods are shared on a single object in the heap rather than copied.

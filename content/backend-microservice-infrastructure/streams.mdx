@@ -1,0 +1,97 @@
+---
+title: Streams (Web Streams API)
+description: Understand streams, how streaming works in the browser and backend, and how it improves performance and UX
+order: 72
+---
+
+To an SDE 2, **Streams** are an abstraction for **incremental data processing**. Instead of treating data as a single monolithic block (like a 1GB file), we treat it as a sequence of small **Chunks**.
+
+The primary goal of streams is **Memory Efficiency**. By using streams, you can process a file larger than your available RAM because only a few "chunks" are in memory at any given time.
+
+---
+
+### 1. The Core Mechanic: Buffer vs. Stream
+*   **Buffer (Traditional):** `fs.readFile` reads the *entire* file into a specific memory allocation in the **V8 Heap**. If the file is 2GB and your RAM is 1GB, the process crashes with an `Out of Memory` error.
+*   **Stream:** `fs.createReadStream` creates a pointer. It reads a small piece (usually 64KB), processes it, and then discards it to read the next piece.
+
+---
+
+### 2. SDE 2 Deep Dive: Backpressure
+**The SDE 2 View:** Backpressure is the **Flow Control** mechanism that prevents a fast "Producer" from overwhelming a slow "Consumer."
+
+**Mechanics:**
+Every stream has an internal buffer with a **High Water Mark** (limit).
+1.  **The Producer** sends data to the **Consumer**.
+2.  If the Consumer is slow (e.g., a slow disk write), its internal buffer fills up.
+3.  Once it hits the **High Water Mark**, the Consumer sends a signal to the Producer: *"Stop! My buffer is full."*
+4.  The Producer pauses until the Consumer "drains" its buffer and sends a signal to resume.
+
+---
+
+### 3. Code Example: Node.js Streams
+Using `pipeline` is the SDE 2 best practice because it handles backpressure and memory cleanup (closing file descriptors) automatically.
+
+```javascript
+const fs = require('fs');
+const { pipeline } = require('stream');
+const zlib = require('zlib'); // For compression
+
+// SDE 2 Logic: Read -> Compress -> Write
+// This handles a 10GB file using only ~64KB of RAM.
+pipeline(
+  fs.createReadStream('large_input.txt'),   // Readable
+  zlib.createGzip(),                         // Transform
+  fs.createWriteStream('large_output.txt.gz'), // Writable
+  (err) => {
+    if (err) console.error('Pipeline failed.', err);
+    else console.log('Pipeline succeeded.');
+  }
+);
+```
+
+---
+
+### 4. The Web Streams API (Browser)
+Modern browsers now support the standard **ReadableStream** API (WHATWG). This is used for `fetch` bodies, allowing you to process a large API response before it has even finished downloading.
+
+```javascript
+// Fetch a large CSV and process it line-by-line
+const response = await fetch('/large-data.csv');
+const reader = response.body.getReader();
+
+while (true) {
+  // 'done' is true when the stream is closed
+  // 'value' is a Uint8Array (chunk)
+  const { done, value } = await reader.read();
+  
+  if (done) break;
+
+  console.log(`Received chunk of size: ${value.length} bytes`);
+  // Process the chunk...
+}
+```
+
+---
+
+### 5. Types of Streams
+1.  **Readable:** The source (e.g., an incoming HTTP request).
+2.  **Writable:** The destination (e.g., an outgoing HTTP response).
+3.  **Duplex:** Both readable and writable (e.g., a TCP Socket).
+4.  **Transform:** A duplex stream that modifies data as it passes through (e.g., `zlib` compression or `crypto` hashing).
+
+---
+
+### 6. SDE 2 Strategy: Why use Streams?
+
+#### A. Time-to-First-Byte (TTFB)
+With streams, you can start sending the first chunk of a response to the user while the server is still generating the rest. In a **Streaming SSR** (React Server Components) model, this allows the user to see the Header/Shell of the page immediately while the heavy data-fetching for the "Body" is still in progress.
+
+#### B. Memory Footprint
+In a Node.js backend, handling 1,000 concurrent file uploads with `fs.readFile` would require gigabytes of RAM. With `fs.createReadStream`, it requires only a few megabytes, as each request only holds a tiny "chunk" in the buffer.
+
+#### C. Composability
+Streams follow the **Unix Philosophy**: "Do one thing well." You can chain (pipe) multiple streams together to create complex data processing pipelines (e.g., `Decrypt -> Unzip -> Parse -> Save`).
+
+### Summary
+*   **Junior view:** It's a way to read files.
+*   **SDE 2 view:** It is a **Memory-safe Data Transfer Protocol** that uses **Internal Buffering** and **Backpressure Signals** to coordinate data flow between producers and consumers of different speeds, enabling the processing of **infinite datasets** with **constant memory overhead**.

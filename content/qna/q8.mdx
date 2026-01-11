@@ -1,0 +1,109 @@
+---
+title: Question 8 (React & Next)
+description: Learn when to use generateStaticParams (SSG) versus getServerSideProps (SSR) in Next.js and how to make the right choice for performance and data freshness
+order: 33
+---
+
+In modern Next.js (App Router), the choice is between **Static Generation** (using `generateStaticParams`) and **Dynamic Rendering** (what used to be `getServerSideProps`).
+
+As an SDE 2, your decision impacts **TTFB (Time to First Byte)**, **Server Compute Costs**, and **System Reliability**.
+
+---
+
+### 1. `generateStaticParams` (The Static Path)
+**The SDE 2 View:** This is **Build-Time Serialization**. You are pre-calculating the HTML and data for specific routes and storing them as flat files on a CDN/Disk.
+
+**Mechanics:**
+- It replaces `getStaticPaths`.
+- It runs during the `next build` process.
+- **Under the hood:** Next.js crawls these params, renders the Server Components, and saves the output. At request time, the server does **zero work**; it just streams a static file.
+
+```javascript
+// app/blog/[slug]/page.js
+
+// This defines which slugs to bake into HTML at build time
+export async function generateStaticParams() {
+  const posts = await fetch('https://api.example.com/posts').then(res => res.json());
+ 
+  return posts.map((post) => ({
+    slug: post.slug,
+  }));
+}
+
+export default async function Page({ params }) {
+  const { slug } = params;
+  // This fetch is cached by default in SSG
+  const data = await getPost(slug); 
+  return <h1>{data.title}</h1>;
+}
+```
+
+---
+
+### 2. The SSR Equivalent (The Dynamic Path)
+In the App Router, `getServerSideProps` no longer exists. Instead, you simply use an **async Server Component** and opt-out of caching.
+
+**The SDE 2 View:** This is **Request-Time Execution**. The server must start a Node.js process, fetch data, and render the UI for every single visitor.
+
+**Mechanics:**
+- You trigger this by using `dynamic = 'force-dynamic'` or by using `fetch` with `cache: 'no-store'`.
+- It allows access to **Request Headers** (cookies, user-agent, headers) which are unavailable during static generation.
+
+```javascript
+// app/dashboard/page.js
+import { cookies } from 'next/headers';
+
+export default async function Page() {
+  // Accessing cookies forces the page into Dynamic Rendering (SSR)
+  const cookieStore = cookies();
+  const theme = cookieStore.get('theme');
+
+  // cache: 'no-store' mimics getServerSideProps behavior
+  const res = await fetch('https://api.example.com/user-data', { cache: 'no-store' });
+  const data = await res.json();
+
+  return <div>Welcome back, {data.name}</div>;
+}
+```
+
+---
+
+### 3. The SDE 2 Decision Matrix
+
+| Criteria | Use `generateStaticParams` (Static) | Use Dynamic Rendering (SSR) |
+| :--- | :--- | :--- |
+| **Data Volatility** | Low (Updates every few minutes/hours). | High (Changes every second or per user). |
+| **Personalization** | None (Same for all users). | High (User-specific dashboards, carts). |
+| **Performance** | **Instant** (Served from CDN Edge). | **Variable** (Depends on API & Server latency). |
+| **SEO** | Excellent. | Excellent. |
+| **Scalability** | High (Zero DB load at request time). | Moderate (Hits DB/API for every request). |
+| **Reliability** | **Resilient** (Works if DB goes down). | **Fragile** (Fails if DB/API is down). |
+
+---
+
+### 4. Under the Hood: Why it matters
+
+#### A. The Compute Cost
+- **Static:** You pay for compute **once** at build time.
+- **Dynamic:** You pay for compute **every time** a user clicks a link. For a site with 1 million hits, SSR is significantly more expensive.
+
+#### B. The "Waterfall" Effect
+In SSR (Dynamic), the browser is "hanging" while the server waits for the API response. In Static, the HTML is already there. Even with a slow API, the user gets the static UI shell immediately.
+
+#### C. Fallback Behavior
+With `generateStaticParams`, you can use `export const dynamicParams = true`. 
+- **Under the hood:** If a user requests a slug that wasn't generated at build time, Next.js will perform an **on-demand SSR** for that user, and then **cache the result** for the next user (ISR). This is the "Gold Standard" for SDE 2s.
+
+---
+
+### 5. Architectural Recommendation
+
+1.  **Default to Static (`generateStaticParams`):** Use this for 90% of your pages (Marketing, Blogs, Product Listings). Combine with **ISR** (`revalidate`) to keep data fresh without sacrificing performance.
+2.  **Use Dynamic (SSR) only when:**
+    *   You need to read **Cookies** to show different content.
+    *   You need to read **Search Params** (URL queries) that are highly unique.
+    *   The data is so volatile that a 30-second cache is unacceptable (e.g., Stock Tickers, Live Bidding).
+
+### Summary
+*   **Junior view:** Static is for fast things, Dynamic is for data things.
+*   **SDE 2 view:** `generateStaticParams` is a **Pre-serialization strategy** to maximize CDN offloading and system resilience, while Dynamic Rendering is a **Just-in-Time execution model** reserved for cases requiring **Request-specific context** (Cookies/Headers).

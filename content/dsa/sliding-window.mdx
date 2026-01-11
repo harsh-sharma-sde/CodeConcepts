@@ -1,0 +1,103 @@
+---
+title: Sliding Window Technique
+description: Learn the sliding window algorithm, how it improves performance, and common use cases in problem-solving
+order: 92
+---
+
+To an SDE 2, the **Sliding Window** is not just a "leetcode trick"; it is a **computational optimization** used to convert $O(N^2)$ or $O(N \cdot K)$ problems into **$O(N)$ linear time complexity**. 
+
+It is the software equivalent of a **Differential Update**. Instead of recalculating a property (sum, average, max) from scratch for every sub-sequence, you only account for the **delta** (what entered and what left the window).
+
+---
+
+### 1. The Core Mechanic: Differential Update
+Imagine you have an array of 1 million integers and you need to find the maximum sum of $K$ consecutive elements.
+
+*   **The Brute Force ($O(N \cdot K)$):** For every index, you loop $K$ times to sum them up. You are repeating the same additions millions of times.
+*   **Sliding Window ($O(N)$):** 
+    1. Calculate the sum of the first $K$ elements.
+    2. Slide the window by 1: **Add** the new element on the right, **Subtract** the element that just left on the left.
+    3. The middle $K-2$ elements are never re-added; their sum is "preserved" in memory.
+
+---
+
+### 2. Types of Windows
+
+#### A. Fixed Window
+The size $K$ is constant. 
+*   **Example:** "Average temperature of the last 24 hours in a stream of sensor data."
+*   **Logic:** `Sum = Sum + NewItem - OldItem`.
+
+#### B. Variable (Dynamic) Window
+The size of the window expands or shrinks based on a condition. 
+*   **Example:** "Smallest sub-array whose sum is greater than $X$."
+*   **Logic:** Use two pointers (`start` and `end`). Expand `end` until the condition is met, then shrink `start` to find the minimum viable size.
+
+---
+
+### 3. Simple Code Example (Fixed Window)
+**Problem:** Find the maximum sum of any sub-array of size `k`.
+
+```javascript
+function maxSubarraySum(arr, k) {
+  if (arr.length < k) return 0;
+
+  let maxSum = 0;
+  let currentWindowSum = 0;
+
+  // 1. Compute the first window (Initial state)
+  for (let i = 0; i < k; i++) {
+    currentWindowSum += arr[i];
+  }
+  
+  maxSum = currentWindowSum;
+
+  // 2. Slide the window (Differential update)
+  for (let i = k; i < arr.length; i++) {
+    // Add the element entering (arr[i])
+    // Subtract the element leaving (arr[i - k])
+    currentWindowSum += arr[i] - arr[i - k];
+    
+    maxSum = Math.max(maxSum, currentWindowSum);
+  }
+
+  return maxSum;
+}
+
+// Execution: O(n) time, O(1) space.
+console.log(maxSubarraySum([2, 1, 5, 1, 3, 2], 3)); // Result: 9 (5+1+3)
+```
+
+---
+
+### 4. SDE 2 Deep Dive: Real-world Applications
+
+#### A. TCP Congestion Control
+The internet literally runs on a "Sliding Window." The **TCP Sliding Window** protocol determines how many data packets can be sent without waiting for an acknowledgment (ACK). If the network is fast, the window expands; if packets are dropped, the window shrinks (Variable Window).
+
+#### B. Rate Limiting (Sliding Window Log)
+In System Design, we use this to prevent API abuse. Instead of a "Fixed Window" (which has the "Boundary Burst" bug), we store timestamps in a sliding window. We only count requests within the `current_time - 60 seconds` range.
+
+#### C. Streaming Analytics (Flink/Spark)
+Processing 100k events per second. To calculate the "Trending Topics" in the last 10 minutes, the system uses a **Sliding Window** to incrementally update counters rather than re-scanning the entire database.
+
+---
+
+### 5. Performance & Memory: Cache Locality
+As an SDE 2, you know that Sliding Window is highly **Cache Friendly**.
+- Because the window moves sequentially through memory, the CPU's **Preload Scanner** can easily predict which memory addresses are needed next. 
+- This results in high **L1/L2 Cache hit rates**, making it significantly faster than algorithms that jump around in memory (like some graph traversals or recursive calls).
+
+---
+
+### 6. SDE 2 Summary Checklist
+1.  **Is the data a sequence (Array/String/Stream)?** Sliding window is a candidate.
+2.  **Am I re-calculating the same thing?** Use the differential update logic.
+3.  **Is it a fixed or variable size?** 
+    - Fixed: Use a simple `for` loop.
+    - Variable: Use two pointers and a `while` loop to shrink.
+4.  **Edge cases:** Handle cases where the input is smaller than the window size.
+
+### Summary
+*   **Junior view:** It's a way to avoid nested loops.
+*   **SDE 2 view:** It is a **Stateful Incremental Update** pattern that leverages **Sequential Memory Access** to optimize **Throughput**. It transforms $O(N^2)$ complexities into **$O(N)$** by maintaining a running aggregate and only processing the **Deltas** at the boundaries.

@@ -1,0 +1,91 @@
+---
+title: Question 13 (System Design)
+description: Learn how to design a scalable video streaming platform with efficient video players, buffering, and lazy loading
+order: 56
+---
+
+To an SDE 2, designing a video platform is a challenge of **Data Throughput** and **Network Adaptability**. You aren't just playing a file; you are managing a **Continuous Stream of Chunks** and a **Buffer State Machine** that must respond to fluctuating bandwidth in real-time.
+
+---
+
+### 1. The Core Architecture: ABR (Adaptive Bitrate Streaming)
+**The SDE 2 View:** We never serve a single `.mp4` file. Instead, we use protocols like **HLS (HTTP Live Streaming)** or **DASH**. 
+
+**Mechanics:**
+1.  **Transcoding:** The server takes the original video and encodes it into multiple resolutions (1080p, 720p, 480p).
+2.  **Chunking:** Each resolution is chopped into small segments (e.g., 2-second `.ts` or `.m4s` files).
+3.  **The Manifest:** A `.m3u8` (HLS) or `.mpd` (DASH) file acts as a **Playlist of Playlists**. It tells the player: "Here are the 1080p chunks, and here are the 480p chunks."
+
+---
+
+### 2. Under the Hood: The Browser Player (MSE)
+**The SDE 2 View:** Standard `<video src="...">` is too limited. We use **MSE (Media Source Extensions)**.
+
+**Mechanics:**
+MSE is a JavaScript API that allows us to "feed" video chunks into a buffer manually.
+1.  **Fetcher:** JavaScript fetches a 2-second segment via `fetch` (as an `ArrayBuffer`).
+2.  **SourceBuffer:** JS appends this buffer into the `SourceBuffer` object.
+3.  **Video Tag:** The `<video>` tag plays from this managed buffer, not a URL.
+
+```javascript
+// Simplified MSE Logic
+const video = document.querySelector('video');
+const mediaSource = new MediaSource();
+video.src = URL.createObjectURL(mediaSource);
+
+mediaSource.addEventListener('sourceopen', () => {
+  const sourceBuffer = mediaSource.addSourceBuffer('video/mp4; codecs="avc1.42E01E"');
+  fetch('/segment_1.m4s')
+    .then(res => res.arrayBuffer())
+    .then(data => sourceBuffer.appendBuffer(data)); // Feed the buffer manually
+});
+```
+
+---
+
+### 3. SDE 2 Strategy: The ABR Algorithm
+The "Brain" of the player is the **Adaptive Bitrate Algorithm**. It decides which quality chunk to fetch next.
+
+**Logic:**
+- **Throughput Estimation:** Measure how long the *previous* 2-second chunk took to download. If it took 0.5s, the bandwidth is high.
+- **Buffer Occupancy:** If the player has 30 seconds of video already buffered, it can "afford" to try fetching a 1080p chunk. If the buffer is only 2 seconds, it must switch to 480p immediately to prevent a stall.
+
+---
+
+### 4. Feed Optimization: Intersection Observer & Virtualization
+If you are building a "TikTok-style" or "YouTube-style" feed, you cannot initialize 50 video players.
+
+#### A. Lazy Initialization
+Use the **Intersection Observer API**.
+- **The Rule:** Only the video in the viewport is "Active."
+- **Pre-warming:** When a video is "near" the viewport (e.g., 200px away), start fetching its **Manifest** and the **First 2 chunks**. 
+- **Teardown:** When a video leaves the viewport, destroy the `MediaSource` and clear its buffer to reclaim **V8 Heap Memory**.
+
+#### B. The Poster Image Strategy
+Never load the `<video>` tag initially.
+1. Show a **WebP Poster Image**.
+2. On `Intersection` or `User Click`, swap the `<img>` for a `<video>` tag. This saves megabytes of JS and network data for videos the user never watches.
+
+---
+
+### 5. Buffering and UX (The "Jank" Prevention)
+
+#### A. Pre-fetching
+A common SDE 2 trick: When the user hovers over a video thumbnail, start pre-fetching the manifest file. By the time they click, the player can start playback instantly (reducing **Start-up Latency**).
+
+#### B. Buffer Windowing
+Don't buffer the *whole* video. 
+- **Forward Buffer:** Keep 30-60 seconds ahead.
+- **Back Buffer:** Keep 5-10 seconds behind (to allow for small seek-backs without re-fetching). 
+- If the user pauses, stop fetching. This saves server costs.
+
+---
+
+### 6. SDE 2 Checklist: Infrastructure
+*   **CDN (Content Delivery Network):** Essential. Video chunks must be cached as close to the user as possible (the "Edge").
+*   **DRM (Digital Rights Management):** For premium content (Netflix), use **EME (Encrypted Media Extensions)** to communicate with Widevine or FairPlay.
+*   **Thumbnails:** Use **VTT (Video Text Tracks)** to show "Preview Scrubbing" thumbnails when the user hovers over the progress bar.
+
+### Summary
+*   **Junior view:** Just put a `.mp4` link in a `<video>` tag.
+*   **SDE 2 view:** It is a **Distributed Buffer Management** problem. We use **HLS/DASH** for segmenting, **MSE** for manual buffer control, and **ABR Algorithms** to balance visual quality with network stability, while using **Intersection Observers** to manage the lifecycle of players in a feed.

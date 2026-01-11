@@ -1,0 +1,93 @@
+---
+title: Questions 22 (Backend)
+description: Understand why a microservices architecture can benefit frontend teams compared to a monolithic approach
+order: 89
+---
+
+To an SDE 2, the choice between a Monolith and Microservices (specifically **Micro-frontends** in this context) is a trade-off between **Development Velocity** and **Operational Complexity**. 
+
+As a team grows from 5 developers to 50+, a Monolith becomes a bottleneck not because of the code, but because of the **human synchronization overhead**.
+
+---
+
+### 1. The "Monolith" Bottleneck
+**The SDE 2 View:** A Monolith is a **Single Deployment Unit**. 
+- **The Problem:** Even if you have 10 independent feature teams, they all share a single `package.json`, a single CI/CD pipeline, and a single "Release Train."
+- **The Result:** If the "Settings Team" breaks a unit test, the "Checkout Team" cannot deploy their critical bug fix. This is called **Deployment Coupling**.
+
+---
+
+### 2. Micro-frontends (The Microservice approach)
+**The SDE 2 View:** Micro-frontends break the frontend into **Autonomous Sub-applications** that are composed at runtime.
+
+#### Key Benefits for a Frontend Team:
+1.  **Independent Deployments:** The "Search Team" can deploy 10 times a day without talking to the "Profile Team."
+2.  **Technology Agnosticism:** One team can migrate to React 18 or even try Svelte without forcing the entire company to upgrade simultaneously.
+3.  **Fault Isolation:** If a micro-frontend crashes (e.g., a runtime error in the Reviews section), the rest of the page (the "Buy" button) remains interactive.
+4.  **Incremental Refactoring:** You can replace a 10-year-old legacy app piece by piece instead of a "Big Bang" rewrite.
+
+---
+
+### 3. The Under-the-Hood Mechanic: Runtime Orchestration
+In a Monolith, code is linked at **Build Time**. In Micro-frontends, code is linked at **Runtime** (usually via **Module Federation**).
+
+**The Workflow:**
+1.  The **Shell (Container)** app loads.
+2.  It fetches a **Manifest** (JSON) that lists where each micro-app's bundle is hosted (e.g., S3 buckets).
+3.  It dynamically injects the script for the required MFE into the DOM.
+
+```javascript
+// Shell App Logic (Conceptual)
+const MFE_MAP = {
+  cart: "https://cdn.com/cart/remoteEntry.js",
+  search: "https://cdn.com/search/remoteEntry.js"
+};
+
+// Loading a micro-app on demand
+const loadMFE = async (name) => {
+  await import(MFE_MAP[name]);
+  const Component = window[name].getComponent();
+  render(Component, document.getElementById('root'));
+};
+```
+
+---
+
+### 4. SDE 2 Deep Dive: The Challenges (The "Hidden Tax")
+
+#### A. Dependency Duplication
+If 10 teams each bundle their own React, the user downloads 10 copies of React.
+*   **SDE 2 Solution:** Use **Module Federation** to mark React as a "Shared Singleton." The Shell provides React, and the MFEs "hook" into it at runtime.
+
+#### B. Global CSS Leaks
+CSS in a Monolith is global. In MFEs, Team A's styles can accidentally break Team B's UI.
+*   **SDE 2 Solution:** Enforce **CSS Modules**, **Tailwind Prefixes**, or **Shadow DOM** for strict encapsulation.
+
+#### C. Shared State
+How does the "Header" MFE know the "Cart" MFE has a new item?
+*   **SDE 2 Solution:** Avoid a shared Redux store (this couples teams). Use **Browser-native Events** or **URL Params**.
+    ```javascript
+    // Team A (Cart)
+    window.dispatchEvent(new CustomEvent('cart_updated', { detail: { count: 5 } }));
+
+    // Team B (Header)
+    window.addEventListener('cart_updated', (e) => updateCount(e.detail.count));
+    ```
+
+---
+
+### 5. SDE 2 Decision Matrix: When to switch?
+
+| Feature | Monolith | Micro-frontends |
+| :--- | :--- | :--- |
+| **Team Size** | 1–15 Developers | 20+ Developers (Multiple Teams) |
+| **Deployment** | All or Nothing | Independent per feature |
+| **Complexity** | Low (Single Repo) | High (Infrastructure/Orchestration) |
+| **Tech Stack** | Consistent | Flexible (Per-team choice) |
+| **Performance** | Optimized Build (Tree-shaking) | Risk of redundant code/waterfalls |
+
+---
+
+### Summary for SDE 2s
+- **Use a Monolith** for startups and small teams where speed of development is more important than speed of deployment.
+- **Use Micro-frontends** when the **Organizational Friction** (merge conflicts, blocked releases, testing bottlenecks) outweighs the **Technical Friction** of managing a distributed frontend architecture.

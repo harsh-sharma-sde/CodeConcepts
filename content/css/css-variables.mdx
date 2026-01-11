@@ -1,0 +1,96 @@
+---
+title: CSS Variables (Custom Properties)
+description: Learn how to use CSS variables for reusable and maintainable styles, including scoping and dynamic updates
+order: 37
+---
+
+To an SDE 2, **CSS Variables (Custom Properties)** are not just "constants" for colors. They are **Dynamic Tokens** that live in the **CSSOM (CSS Object Model)**. 
+
+Unlike Sass or Less variables, which are **Static** (resolved at compile-time and erased), CSS Variables are **Runtime-reactive**, follow the **Cascade**, and can be manipulated via **JavaScript**.
+
+---
+
+### 1. The Under-the-Hood Mechanic: Inheritance & Scope
+CSS Variables follow the same **Inheritance** and **Specificity** rules as any other CSS property. When the browser engine encounters `var(--name)`, it performs a **lookup** starting from the current element and moving up the DOM tree until it finds a definition.
+
+**Mechanics:**
+The browser maintains a "computed value" for every property. For custom properties, it stores these in a map associated with each element node.
+
+```css
+:root {
+  --primary-color: #3b82f6; /* Global scope */
+}
+
+.card {
+  --primary-color: #ef4444; /* Local override (Scoping) */
+}
+
+.btn {
+  background-color: var(--primary-color);
+}
+```
+
+**The SDE 2 Insight:** If a `.btn` is inside a `.card`, it will be red. If it is outside, it will be blue. This "Contextual Theming" is impossible with Sass variables without generating hundreds of extra lines of CSS.
+
+---
+
+### 2. Runtime Interop (JS + CSS)
+As an SDE 2, you use CSS Variables to bridge the gap between your logic (JS) and your styles. 
+
+**Mechanics:** Since CSS variables are part of the DOM, you can use `setProperty`. This does not trigger a full style re-parse of the entire sheet; it only triggers a **Recalculate Styles** and **Paint** for the affected subtree.
+
+```javascript
+// Dynamic Theming or User Preferences
+const root = document.documentElement;
+
+function updateTheme(color) {
+  // Directly modifies the CSSOM at runtime
+  root.style.setProperty('--primary-color', color);
+}
+```
+
+---
+
+### 3. SDE 2 Performance Deep Dive: Invalidation
+When you change a CSS variable, the browser must identify which elements are "subscribed" to that variable.
+
+*   **Global Variables (`:root`):** Changing a variable on `:root` is powerful but can be expensive. The browser must check **every** element to see if its styles are affected by that variable change. 
+*   **Local Variables:** Changing a variable on a specific class (e.g., `.component--active`) only triggers a style recalculation for that component and its children.
+
+**Performance Tip:** Avoid animating CSS variables that affect **Layout** (like `--width: 100px`). Animating a variable triggers a **Reflow**. Stick to animating variables that affect **Paint** (colors, opacity) or use them inside `transform`.
+
+---
+
+### 4. Comparison: Sass vs. CSS Variables
+
+| Feature | Sass Variables (`$var`) | CSS Variables (`--var`) |
+| :--- | :--- | :--- |
+| **Resolution** | Compile-time (Build step) | Runtime (Browser) |
+| **Scope** | Block-level (Sass logic) | DOM-tree based (Cascade) |
+| **JS Access** | No | Yes |
+| **Type** | Static String Replacement | Live CSSOM Property |
+| **Performance** | Zero runtime cost | Small lookup overhead |
+
+---
+
+### 5. Architectural Pattern: Tokens in Tailwind/MUI
+Modern UI libraries use CSS Variables to implement **Design Systems**.
+
+*   **Tailwind:** Under the hood, Tailwind’s `opacity-50` often looks like this: `rgba(..., var(--tw-text-opacity))`. This allows utilities to interact with each other.
+*   **MUI:** Modern MUI (v5+) and Joy UI use CSS variables to prevent "Flicker of Unstyled Content" (FOUC) in dark mode. Because the variable can be resolved before the JS bundle loads, the browser paints the correct theme immediately.
+
+---
+
+### 6. Fallbacks & Invalid Values
+If a `var()` points to an undefined variable, the property becomes **invalid at computed-value time**.
+
+```css
+/* If --accent is missing, it falls back to 'blue' */
+color: var(--accent, blue); 
+```
+
+**SDE 2 Edge Case:** If you pass a wrong type (e.g., `color: var(--my-width);` where the variable is `20px`), the browser doesn't use the fallback. It realizes the value is invalid for the `color` property and defaults to `inherit` or `initial` (usually black).
+
+### Summary
+*   **Junior view:** It's just a way to save a hex code.
+*   **SDE 2 view:** It is a **Runtime Token System** that leverages the **DOM Cascade**. It allows for **Dynamic Theming**, **Contextual Overrides**, and **JS-CSS synchronization** while providing better performance for theme switching compared to re-generating CSS classes.

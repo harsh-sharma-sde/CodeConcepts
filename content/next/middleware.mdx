@@ -1,0 +1,113 @@
+---
+title: Middleware in Next.js
+description: Understand how middleware works in Next.js, its use cases, and how to implement it for routing, authentication, and redirects
+order: 28
+---
+
+To an SDE 2, **Middleware** is a structural implementation of the **Chain of Responsibility** design pattern. It provides a way to execute code, make changes to the request and response objects, and end the request-response cycle or pass control to the next function in the stack.
+
+Whether in Express (Node.js), Next.js, or Redux, the core mechanic is the same: **an "Onion Model" of execution.**
+
+---
+
+### 1. The Under-the-Hood Mechanic: The `next()` Callback
+In a middleware pipeline, functions are stored in an array. The engine maintains an index of the "current" middleware. When you call `next()`, the engine increments the index and invokes the next function in the array.
+
+**Mechanics:**
+- **Asynchronous Flow:** Each middleware is a function that receives the `request`, `response`, and a `next` pointer.
+- **The "Onion" Effect:** Code before `next()` runs during the **Request phase** (moving into the onion). Code after `next()` (if the middleware is `async`) runs during the **Response phase** (moving out of the onion).
+
+---
+
+### 2. Server-Side Middleware (Express Pattern)
+
+```javascript
+const express = require('express');
+const app = express();
+
+// Middleware 1: Logger
+app.use(async (req, res, next) => {
+    const start = Date.now();
+    console.log("1. Entering Logger");
+    
+    await next(); // Passing control to the next middleware
+    
+    // This runs after the response is handled (Onion Model)
+    const ms = Date.now() - start;
+    console.log(`4. Exiting Logger: ${ms}ms`);
+});
+
+// Middleware 2: Authenticator (Short-circuiting)
+app.use((req, res, next) => {
+    console.log("2. Entering Auth");
+    if (req.headers.authorization) {
+        next();
+    } else {
+        // Short-circuit: The chain stops here.
+        res.status(401).send("Unauthorized");
+    }
+});
+
+app.get('/', (req, res) => {
+    console.log("3. Executing Route Handler");
+    res.send("Hello SDE 2");
+});
+```
+
+**Order of execution:** `1 -> 2 -> 3 -> 4`.
+
+---
+
+### 3. Redux Middleware: The Functional Pattern
+**The SDE 2 View:** Redux middleware uses **Currying** (Higher-Order Functions) to wrap the `dispatch` method. It sits between the action being dispatched and the moment it reaches the reducer.
+
+**Mechanics:**
+It follows the signature `store => next => action`. This allows each middleware to capture the `action`, do something (like logging or an API call), and then call `next(action)` to let the next middleware (or finally the reducer) handle it.
+
+```javascript
+const loggerMiddleware = store => next => action => {
+    console.log('Dispatching:', action);
+    let result = next(action); // Passes to the next middleware/reducer
+    console.log('Next state:', store.getState());
+    return result;
+};
+```
+
+---
+
+### 4. SDE 2 Deep Dive: Short-Circuiting and Errors
+
+#### A. Short-Circuiting
+As an SDE 2, you use middleware for **Guard Clauses**. If a request fails validation or auth, you do not call `next()`. This stops the execution in its tracks, protecting your expensive business logic from ever running.
+
+#### B. Error-Handling Middleware
+In Express, error-handling middleware has a unique 4-argument signature: `(err, req, res, next)`.
+**Mechanics:** When you call `next(error)` with an argument, the engine skips all regular middleware in the array and jumps straight to the first function it finds that accepts 4 arguments.
+
+```javascript
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).send('Something broke!');
+});
+```
+
+---
+
+### 5. Next.js Middleware (Edge Runtime)
+**The SDE 2 View:** Next.js middleware runs in a **V8 Isolate** (Edge Runtime) rather than a full Node.js environment.
+
+**Mechanics:**
+- It runs **before** the request reaches the cache or the route handler. 
+- Because it runs in an Isolate, it has a limited API (no `fs` or `child_process`) but starts up in milliseconds.
+- It is ideal for **Geography-based routing**, **A/B Testing**, and **Security Headers**.
+
+---
+
+### 6. SDE 2 Performance & Memory Pitfalls
+1.  **Shared State:** Middleware often attaches data to the `req` object (e.g., `req.user = user`). As an SDE 2, you must be careful about naming collisions and type safety.
+2.  **Order Matters:** If you put a `bodyParser` middleware *after* a route that needs it, the route will receive an empty body. The middleware array is strictly sequential.
+3.  **Hanging Requests:** If you forget to call `next()` and don't send a response (`res.send()`), the browser will hang until it times out. This is a common source of memory leaks and connection pool exhaustion.
+
+### Summary
+*   **Junior view:** It’s code that runs before my route.
+*   **SDE 2 view:** it is an **Asynchronous Pipeline** based on the **Chain of Responsibility** pattern. It allows for **Request Augmentation**, **Short-circuiting logic**, and **Post-processing** via the **Onion Model**, providing a decoupled way to handle cross-cutting concerns.

@@ -1,0 +1,105 @@
+---
+title: Memoization & Dynamic Programming
+description: Understand memoization, how it improves performance, and its role in dynamic programming
+order: 95
+---
+
+To an SDE 2, **Memoization** is a **Space-Time Tradeoff**. It is the process of caching the results of expensive function calls to avoid redundant computations when the same inputs occur again.
+
+In the context of **Dynamic Programming (DP)**, memoization is the "Top-Down" approach. It allows you to solve a problem by breaking it into subproblems, but ensuring you only solve each subproblem **exactly once**.
+
+---
+
+### 1. The Core Mechanic: The Lookup Table
+**The SDE 2 View:** Memoization transforms a recursive process with **Overlapping Subproblems** from an exponential time complexity ($O(2^n)$) to a linear or polynomial time complexity ($O(n)$) by using the **Heap** as a lookup table.
+
+**Mechanics:**
+1.  **State Representation:** Identify the input parameters that uniquely define a subproblem. These become your **Cache Keys**.
+2.  **The Cache:** Use a `Map` or a plain `Object` in the heap.
+3.  **The Interceptor:** Before executing the function logic, check the cache. If it exists, return it immediately (skipping the entire execution branch).
+
+---
+
+### 2. Code Example: Fibonacci (The $O(2^n)$ to $O(n)$ Shift)
+
+```javascript
+// SDE 2 Pattern: Memoization (Top-Down)
+const memo = new Map();
+
+function fib(n) {
+  // 1. Base Case
+  if (n <= 1) return n;
+
+  // 2. Check Cache (Heap Lookup)
+  if (memo.has(n)) return memo.get(n);
+
+  // 3. Compute and Store (Recursive Branching)
+  const result = fib(n - 1) + fib(n - 2);
+  memo.set(n, result);
+
+  return result;
+}
+
+// Without memo: n=40 takes millions of calls.
+// With memo: n=40 takes exactly 40 calls.
+```
+
+---
+
+### 3. SDE 2 Deep Dive: Top-Down vs. Bottom-Up
+
+#### A. Top-Down (Memoization)
+*   **Mechanic:** Starts at the end (`n`) and works backward.
+*   **Pros:** Only solves the subproblems that are actually needed.
+*   **Cons:** Uses the **JavaScript Call Stack**. For very deep problems, you will hit a `RangeError: Maximum call stack size exceeded`.
+
+#### B. Bottom-Up (Tabulation)
+*   **Mechanic:** Starts from the smallest subproblem and builds a table (array) iteratively.
+*   **Pros:** No recursion, no call stack risk. Often faster because of **CPU Cache Locality** (iterating through an array is faster than jumping through recursive pointers).
+*   **Cons:** Must solve *every* subproblem in the table, even if some aren't needed for the final answer.
+
+---
+
+### 4. SDE 2 Strategy: Designing a Generic `memoize`
+In production, you often want a higher-order function to wrap existing logic.
+
+```javascript
+function memoize(fn) {
+  const cache = new Map();
+
+  return function(...args) {
+    // SDE 2 Insight: For multi-argument functions, 
+    // we must serialize the keys or use a nested Map.
+    const key = JSON.stringify(args); 
+
+    if (cache.has(key)) {
+      return cache.get(key);
+    }
+
+    const result = fn.apply(this, args);
+    cache.set(key, result);
+    return result;
+  };
+}
+```
+
+---
+
+### 5. Memory Management & WeakMaps
+**The SDE 2 View:** A global `Map` used for memoization is a **Memory Leak Risk**. The map holds a strong reference to its keys and values, preventing the Garbage Collector (GC) from reclaiming them.
+
+**The Solution:**
+1.  **`WeakMap`:** If your memoization keys are **Objects**, use a `WeakMap`. If the object is deleted elsewhere in the app, the cache entry is automatically garbage collected.
+2.  **LRU (Least Recently Used) Cache:** For long-running servers, use an LRU cache (like the `lru-cache` npm package) to cap the cache size (e.g., only keep the last 1,000 results).
+
+---
+
+### 6. SDE 2 Summary Checklist
+1.  **Is the function Pure?** Memoization only works if the same input *always* produces the same output. If the function depends on a global variable or a database, memoization will return stale data.
+2.  **Are there Overlapping Subproblems?** If every call to the function uses unique inputs (no overlap), memoization adds overhead without any benefit.
+3.  **Stack Depth:** If the recursion depth is > 5,000, move to a **Bottom-Up (Iterative)** approach to avoid stack overflow.
+4.  **Key Serialization:** Be careful with `JSON.stringify` for keys; it’s slow. For simple functions, a template string `key = ${arg1}_${arg2}` is much faster.
+
+### Summary
+*   **Junior view:** It’s a way to make recursion faster by saving results in an object.
+*   **SDE 2 view:** It is an **Optimization of the Time-Space Complexity** that utilizes **Heap Storage** to prune **Recursive Search Trees**. We balance **Call Stack Depth** against **Iterative Tabulation** and manage **Heap Pressure** via **WeakMaps** or **LRU eviction policies**.

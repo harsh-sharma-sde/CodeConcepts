@@ -1,0 +1,79 @@
+---
+title: Question 17 (Web Vital)
+description: Step-by-step approach to diagnose and fix a low Largest Contentful Paint (LCP) score
+order: 69
+---
+
+To an SDE 2, a low LCP score isn't just a "slow site"—it’s a failure in the **Critical Rendering Path**. My audit process is a systematic "trace-back" from the pixel to the packet.
+
+I divide the LCP time into four distinct phases and investigate each one:
+**LCP = TTFB + Resource Load Delay + Resource Load Duration + Element Render Delay.**
+
+---
+
+### Phase 1: Identification & The "What"
+Before looking at code, I identify the target.
+1.  **Locate the Candidate:** Open Chrome DevTools -> Performance Tab -> Record a load. Click on the **LCP marker** in the Timings track. 
+2.  **Context Check:** Is it an `<img>`, a `background-image` in CSS, or a text block?
+    *   *SDE 2 Insight:* If it's a text block, the delay is likely **Font Loading** or **Render-blocking JS**. If it's an image, it’s a **Resource Discovery** or **Network** issue.
+
+---
+
+### Phase 2: Analyzing the "Waterfall" (The 4 Pillars)
+
+#### 1. TTFB (Time to First Byte)
+*   **The Check:** Is the server taking > 600ms to send the first byte?
+*   **Audit:** Check the Network tab for the initial HTML request. 
+*   **SDE 2 Fixes:** 
+    *   **SSR Bottleneck:** Is the server-side DB query slow? (Add Redis caching).
+    *   **Edge:** Use a CDN to serve the HTML from a closer "Edge" location.
+    *   **Cold Starts:** If using Lambda/Functions, check for cold start latency.
+
+#### 2. Resource Load Delay (The "Discovery" Phase)
+*   **The Check:** Does the browser start downloading the LCP image *immediately* after the HTML arrives?
+*   **Audit:** In the Network tab, compare the "Start Time" of the HTML vs. the "Start Time" of the LCP image.
+*   **The "Discovery Gap":** If there's a gap, the **Preload Scanner** failed to find the image.
+    *   *Common Culprit:* The image is defined in an external CSS file or injected via JS.
+*   **SDE 2 Fixes:** 
+    *   **Preload:** Add `<link rel="preload" as="image" href="...">`.
+    *   **Fetch Priority:** Add `fetchpriority="high"` to the `<img>` tag.
+    *   **Anti-pattern:** Ensure `loading="lazy"` is **not** on the LCP image.
+
+#### 3. Resource Load Duration (The "Transfer" Phase)
+*   **The Check:** Is the image file too large?
+*   **Audit:** Check the "Size" and "Time" columns.
+*   **SDE 2 Fixes:**
+    *   **Compression:** Use **WebP** or **AVIF**.
+    *   **Responsive Images:** Ensure the `srcset` isn't sending a 4000px image to a mobile device.
+    *   **CDN:** Ensure the image is served via a CDN with **Brotli** or Gzip for any associated text assets.
+
+#### 4. Element Render Delay (The "Paint" Phase)
+*   **The Check:** The image finished downloading, but it didn't appear on screen for another 500ms. Why?
+*   **Audit:** Check the **Main Thread** in the Performance tab.
+*   **Common Culprit:** 
+    *   **Render-Blocking CSS:** The browser is waiting for a massive CSS file before it can build the CSSOM.
+    *   **JS Execution:** A heavy hydration process (in React/Next.js) or a long-running script is blocking the paint.
+*   **SDE 2 Fixes:**
+    *   **Critical CSS:** Inline the ATF (Above-the-fold) styles.
+    *   **Async/Defer:** Ensure non-critical scripts don't block the parser.
+
+---
+
+### Phase 3: The "Hydration" Audit (For React/Next.js)
+In modern frameworks, the LCP can "shift" or "flicker" during hydration.
+1.  **Mismatch:** Is the server-rendered HTML being thrown away and re-rendered by the client? This doubles the LCP time.
+2.  **Streaming:** Use `React Server Components` or `Suspense` to stream the LCP element early, while the rest of the page loads.
+
+---
+
+### Phase 4: Validation & Monitoring (RUM)
+Lab data (Lighthouse) is a snapshot. As an SDE 2, I care about **Field Data (CrUX)**.
+1.  **Instrumentation:** Use the `web-vitals` library to send actual LCP data from real users to an analytics endpoint (Sentry/New Relic).
+2.  **Breakdown:** Filter the data by **Device** (Mobile vs Desktop) and **Connection Speed** (4G vs 3G) to find where the "p90" users are suffering.
+
+### Summary Checklist for the Interview
+*   **Discovery:** Use `Preload` and `FetchPriority`.
+*   **Priority:** Remove `loading="lazy"` from LCP.
+*   **Size:** Use modern formats (AVIF) and `srcset`.
+*   **Blocking:** Minimize Render-blocking CSS and Long Tasks in JS.
+*   **Network:** Optimize TTFB via CDN and Edge Caching.

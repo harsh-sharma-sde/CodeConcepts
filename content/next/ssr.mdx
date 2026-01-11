@@ -1,0 +1,95 @@
+---
+title: Server Side Rendering (SSR)
+description: Deep dive into Server Side Rendering, how it works, benefits, trade-offs, and usage in modern frameworks like Next.js
+order: 24
+---
+
+To an SDE 2, **Server-Side Rendering (SSR)** is an architectural shift from "Client-managed UI" to a **Distributed Rendering Model**. 
+
+Instead of sending an empty `index.html` and a massive JS bundle (CSR), the server executes the JavaScript, generates the initial HTML string, and sends it to the browser. The browser displays the UI immediately and later "hydrates" it to make it interactive.
+
+---
+
+### 1. The Under-the-Hood Lifecycle
+As an SDE 2, you must understand the two-step process: **Rendering** and **Hydration**.
+
+#### Step 1: The Server Render
+1.  **Request:** A request hits the Node.js server (Express/Next.js).
+2.  **Data Fetching:** The server fetches data (e.g., from a DB or API).
+3.  **Stringification:** React's `renderToString` or `renderToPipeableStream` traverses the component tree and converts it into a static HTML string.
+4.  **Response:** The HTML is sent to the browser. The user sees the content (FCP - First Contentful Paint).
+
+#### Step 2: Client-Side Hydration
+1.  **JS Download:** The browser downloads the JS bundle.
+2.  **The Handshake:** React runs on the client. It looks at the existing DOM and "attaches" event listeners to the HTML sent by the server. 
+3.  **Interactivity:** The app is now interactive (TTI - Time to Interactive).
+
+---
+
+### 2. Simple Code Example (Express + React)
+
+```javascript
+// server.js (Node.js)
+import express from 'express';
+import React from 'react';
+import { renderToString } from 'react-dom/server';
+import App from './App';
+
+const server = express();
+
+server.get('*', async (req, res) => {
+  // 1. Fetch data for the specific route
+  const data = await fetchData(); 
+
+  // 2. Render the app to a string
+  const appHtml = renderToString(<App initialData={data} />);
+
+  // 3. Inject the HTML and serialized data into a template
+  res.send(`
+    <html>
+      <body>
+        <div id="root">${appHtml}</div>
+        <script>window.__INITIAL_DATA__ = ${JSON.stringify(data)}</script>
+        <script src="/bundle.js"></script>
+      </body>
+    </html>
+  `);
+});
+```
+
+---
+
+### 3. SDE 2 Deep Dive: The Challenges
+
+#### A. Data Serialization & "The Waterfall"
+You cannot just fetch data on the server; you must also **serialize** it into the HTML (e.g., in a `window.__INITIAL_DATA__` script). 
+*   **Why?** If the client-side React doesn't have the same data as the server, the generated HTML won't match. This causes a **Hydration Mismatch Error**, forcing React to throw away the server HTML and re-render from scratch (destroying performance).
+
+#### B. Isomorphic/Universal Code
+As an SDE 2, you must ensure your code is **Isomorphic**.
+*   **The Trap:** If a component calls `window.localStorage` or `document.querySelector` during the initial render, the Node.js server will crash because `window` does not exist in a non-browser environment.
+*   **The Fix:** Use `useEffect` (which only runs on the client) or check `typeof window !== 'undefined'`.
+
+#### C. TTFB (Time to First Byte)
+In CSR, TTFB is fast (sending a static file). In SSR, TTFB is slower because the server is blocked waiting for data fetching and the CPU-intensive `renderToString` call.
+*   **SDE 2 Optimization:** Use **Streaming SSR** (`renderToPipeableStream`). This allows the server to send the HTML header and shell immediately and "stream" the content chunks as they are rendered, improving perceived performance.
+
+---
+
+### 4. SSR vs. CSR vs. SSG
+
+| Metric | CSR (Client) | SSR (Server) | SSG (Static Gen) |
+| :--- | :--- | :--- | :--- |
+| **SEO** | Poor (usually) | Excellent | Excellent |
+| **First Paint** | Slow (waits for JS) | Fast (HTML is ready) | Instant (CDN) |
+| **Server Load** | Low (Static files) | High (CPU per req) | Low (Pre-built) |
+| **Use Case** | Dashboards, SPAs | E-commerce, News | Blogs, Documentation |
+
+---
+
+### 5. Architectural Insight: Why Next.js?
+Next.js abstracts the complexity of SSR. It handles the **Hydration** logic, the **Data Prefetching** (`getServerSideProps`), and the **Code Splitting** automatically. As an SDE 2, you choose SSR when SEO and "Time to Content" are critical for the business, accepting the trade-off of higher server complexity and CPU costs.
+
+### Summary
+*   **Junior view:** It makes the site faster and better for Google.
+*   **SDE 2 view:** It is a **Hybrid Execution Model** where the initial UI state is computed on the server to optimize the **Critical Rendering Path**, requiring careful **Data Serialization** and **Isomorphic logic** to ensure successful **Client-side Hydration**.

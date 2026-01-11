@@ -1,0 +1,102 @@
+---
+title: JavaScript Closures
+description: Understand closures with simple and real-world examples
+order: 1
+---
+
+To understand **Closures** as an SDE 2, you have to look past the "function inside a function" definition and look at how the **V8 Engine** manages memory and scope lifecycles.
+
+---
+
+### 1. The Mechanics: Lexical Environments
+Every time the JavaScript engine creates an Execution Context, it also creates a **Lexical Environment**. 
+
+A Lexical Environment consists of:
+1.  **Environment Record:** The actual storage for local variables.
+2.  **Reference to Outer Environment:** A link to the parent's Lexical Environment (the Scope Chain).
+
+**A closure is simply a function that carries a reference to its outer Lexical Environment.**
+
+---
+
+### 2. The SDE 2 Insight: Stack vs. Heap
+In most languages, local variables live on the **Stack**. When a function returns, its stack frame is "popped" and the memory is immediately reclaimed.
+
+**In JavaScript, Closures break this rule.** 
+
+When V8 performs "Scope Analysis" during compilation, it identifies variables that are accessed by inner functions. If an inner function "escapes" (e.g., it's returned or passed to a timer), V8 moves those specific variables from the **Stack to the Heap**. 
+
+This is why the variables survive even after the outer function has finished execution—they are stored in a long-lived memory space that the Garbage Collector (GC) won't touch as long as the inner function is still reachable.
+
+---
+
+### 3. Simple Code Example
+
+```javascript
+function createGreeter(greeting) {
+    // 'greeting' is moved to the Heap because the inner function uses it.
+    return function(name) {
+        console.log(`${greeting}, ${name}`);
+    };
+}
+
+const sayHello = createGreeter("Hello");
+sayHello("Alice"); // "Hello, Alice"
+
+// Even though createGreeter has finished, 'greeting' persists in memory.
+```
+
+---
+
+### 4. Advanced: The "Context" Object (V8 Internals)
+Under the hood, V8 creates an internal object often called a `Context` or `Closure` object. If multiple inner functions share the same outer scope, they share the **same** Context object.
+
+```javascript
+function Counter() {
+    let count = 0; // Shared context property
+    
+    return {
+        inc: () => ++count,
+        dec: () => --count
+    };
+}
+
+const c = Counter();
+console.log(c.inc()); // 1
+console.log(c.dec()); // 0
+// Both 'inc' and 'dec' point to the same memory address for 'count'.
+```
+
+---
+
+### 5. Memory Leaks & The SDE 2 Perspective
+Closures are a double-edged sword for memory. Because they keep the outer Lexical Environment alive, they can cause **Memory Leaks** if not managed.
+
+**The "Hidden" Variable Leak:**
+If a closure references *one* variable in a large outer scope, V8 might keep the *entire* Lexical Environment record alive, including other large variables you didn't intend to keep.
+
+```javascript
+function buildProcessor() {
+    const hugeData = new Array(1000000).fill("🚀"); // Large memory
+    const id = "Processor_1";
+
+    return function() {
+        // This closure only needs 'id', but in older engines or 
+        // complex scenarios, 'hugeData' might be kept in the heap 
+        // because it shares the same Lexical Environment.
+        console.log(id); 
+    };
+}
+
+const myFunc = buildProcessor(); 
+// 'hugeData' is potentially leaked until 'myFunc' is nullified.
+```
+
+### 6. Use Cases for SDE 2s
+1.  **Data Encapsulation (Private Variables):** Before JS had `#private` class fields, closures were the only way to create truly private state that couldn't be tampered with from the outside.
+2.  **Partial Application / Currying:** Building specialized versions of utility functions (e.g., a logger that pre-fills the "Service Name").
+3.  **Memoization:** Storing a cache object in an outer scope that an inner function checks before performing expensive calculations.
+
+### Summary
+*   **Junior view:** A function that remembers variables.
+*   **SDE 2 view:** A mechanism where V8 promotes specific variables from the **Stack to the Heap** to ensure they outlive their parent’s execution context, linked via a persistent **Lexical Environment** reference.

@@ -1,0 +1,122 @@
+---
+title: Circuit Breakers
+description: Understand circuit breakers, why they are critical for resilient systems, and how they work in microservices
+order: 79
+---
+
+To an SDE 2, a **Circuit Breaker** is a **Resiliency Pattern** used to prevent **Cascading Failures** in a distributed system. 
+
+When a downstream service is slow or failing, a naive caller will continue to send requests, causing threads to hang and resources (memory/sockets) to exhaust. The Circuit Breaker "trips" to stop the bleeding, allowing the failing service time to recover and the calling service to remain functional.
+
+---
+
+### 1. The Under-the-Hood Mechanic: The State Machine
+A Circuit Breaker operates as a state machine with three distinct states:
+
+1.  **Closed (Normal):** Requests flow through to the service. The breaker tracks the number of recent failures. If the failure rate exceeds a threshold, it trips to **Open**.
+2.  **Open (Failing):** Requests are "short-circuited." They fail immediately without even attempting to hit the downstream service. This is called **"Fail-Fast."** A timer starts.
+3.  **Half-Open (Testing):** After the timer expires, the breaker allows a **limited number** of test requests.
+    *   If they succeed: It assumes the service is healthy and resets to **Closed**.
+    *   If they fail: It immediately returns to **Open**.
+
+---
+
+### 2. Machine Coding Example: Simple Circuit Breaker
+
+```javascript
+class CircuitBreaker {
+  constructor(request, options = {}) {
+    this.request = request; // The function we are wrapping
+    this.state = 'CLOSED';
+    this.failureThreshold = options.failureThreshold || 3;
+    this.failureCount = 0;
+    this.nextAttempt = Date.now();
+    this.timeout = options.timeout || 5000; // 5 seconds
+  }
+
+  async fire(...args) {
+    if (this.state === 'OPEN') {
+      if (Date.now() > this.nextAttempt) {
+        this.state = 'HALF_OPEN';
+      } else {
+        throw new Error("Circuit is OPEN: Service Unavailable (Fail-Fast)");
+      }
+    }
+
+    try {
+      const response = await this.request(...args);
+      return this.success(response);
+    } catch (err) {
+      return this.fail(err);
+    }
+  }
+
+  success(res) {
+    this.failureCount = 0;
+    this.state = 'CLOSED';
+    return res;
+  }
+
+  fail(err) {
+    this.failureCount++;
+    if (this.failureCount >= this.failureThreshold) {
+      this.state = 'OPEN';
+      this.nextAttempt = Date.now() + this.timeout;
+    }
+    throw err;
+  }
+}
+
+// Usage
+const callExternalApi = () => fetch('https://unstable-api.com');
+const breaker = new CircuitBreaker(callExternalApi);
+
+// In your route handler
+try {
+  const data = await breaker.fire();
+} catch (e) {
+  // Handle fallback here
+}
+```
+
+---
+
+### 3. SDE 2 Strategy: Graceful Degradation (Fallbacks)
+**The SDE 2 View:** A circuit breaker is useless if you just throw an error to the user. You must provide a **Fallback**.
+
+**Mechanics:**
+When the circuit is Open, instead of throwing an error, return a "stale" or "default" value.
+- **Example (E-commerce):** If the "Recommendation Service" is down, the Circuit Breaker trips and the fallback returns a hardcoded list of "Popular Items" instead of personalized ones. The user still sees products, and the system stays alive.
+
+---
+
+### 4. SDE 2 Deep Dive: Thread Exhaustion
+Why not just use a long timeout?
+**The Problem:** If your API has a 30-second timeout and the downstream service starts taking 29 seconds for every request:
+1.  Your server's **Thread Pool** (or Node's internal worker pool) fills up with pending requests.
+2.  New users can't even connect to your server.
+3.  Your server crashes due to **Resource Exhaustion**.
+
+**The Circuit Breaker** prevents this by failing in **0ms** once the circuit is open, freeing up your threads to handle other healthy parts of the application.
+
+---
+
+### 5. Distributed Circuit Breakers
+In a multi-server setup (10 instances of an API Gateway), if one instance detects a failure, should all 10 trip?
+- **Local CB:** Every instance tracks failures independently. Simple, but "leaks" requests to the failing service from other instances.
+- **Distributed CB:** Store the state in **Redis**. 
+    *   *Pros:* Immediate protection across the whole cluster.
+    *   *Cons:* Adds network latency to every request to check Redis state. 
+    *   *SDE 2 Choice:* Use **Local CB** for high-performance paths and **Distributed CB** for critical, expensive resources.
+
+---
+
+### 6. SDE 2 Summary Checklist
+1.  **Thresholds:** Use percentages (e.g., 50% failure) rather than absolute numbers for high-traffic services.
+2.  **Monitoring:** Always emit events when a circuit changes state. If a circuit opens in production, your on-call engineer needs an alert.
+3.  **Timeouts:** A circuit breaker usually works alongside an **Execution Timeout**. If the request takes > 2s, count it as a failure even if it eventually succeeds.
+4.  **Testing:** Use **Chaos Engineering** (injecting latency) to verify that your fallbacks actually work.
+
+### Summary
+*   **Junior view:** It's a try/catch that stops trying after a while.
+*   **SDE 2 view:** It is a **State Machine** used to manage **Fault Tolerance**. It prevents **Cascading Failures** by implementing **Fail-Fast** logic and **Graceful Degradation**, ensuring that one slow downstream dependency doesn't lead to total **Thread Pool Exhaustion** upstream.

@@ -1,0 +1,101 @@
+---
+title: Question 14 (System Design)
+description: Learn how to design a scalable real-time chat application using WebSockets, message persistence, and optimistic UI updates
+order: 57
+---
+
+To an SDE 2, a **Real-time Chat Application** is a challenge in **Distributed State Synchronization**. Your goal is to provide a "zero-latency" feel while ensuring **Message Ordering** and **Eventual Consistency** between the local client, the server, and other participants.
+
+---
+
+### 1. The Transport Layer: WebSockets & Socket.io
+**The SDE 2 View:** We use **WebSockets (WS)** because standard HTTP is too heavy for high-frequency updates. WS provides a persistent, full-duplex TCP connection.
+
+**Mechanics:**
+1.  **The Handshake:** The client sends an HTTP request with an `Upgrade: websocket` header.
+2.  **The Switch:** The server responds with `101 Switching Protocols`. The TCP connection stays open.
+3.  **Heartbeats (Ping/Pong):** Every few seconds, the client/server exchange tiny packets to ensure the connection is still alive.
+4.  **Scaling:** In a multi-server setup, you must use **Redis Pub/Sub**. If User A is on Server 1 and User B is on Server 2, Server 1 publishes the message to Redis, and Server 2 (which is subscribed) pushes it to User B.
+
+---
+
+### 2. State Management: Normalized Cache
+**The SDE 2 View:** Do not store messages nested inside "Room" objects. If a message is edited or deleted, you don't want to hunt through deep arrays. 
+
+**Mechanics:** Store messages in a flat object (Map) keyed by ID.
+```javascript
+{
+  messages: {
+    "msg_101": { id: "msg_101", text: "Hello", status: "SENT", timestamp: 1625... },
+  },
+  channels: {
+    "general": { id: "general", messageIds: ["msg_101"] }
+  }
+}
+```
+
+---
+
+### 3. Optimistic UI Updates: "Trust but Verify"
+**The SDE 2 View:** We don't wait for the server's `ACK` (Acknowledgement) to show the message. We use **ID Reconciliation**.
+
+**The Workflow:**
+1.  **Pre-flight:** Generate a temporary `temp_id` (UUID) on the client. 
+2.  **Optimistic Render:** Add the message to the state immediately with `status: 'SENDING'`.
+3.  **Network Call:** Emit the message via WebSockets.
+4.  **Reconciliation:**
+    - **Success:** Server returns the "real" Database ID. We update the `temp_id` to the `real_id` and change status to `'SENT'`.
+    - **Failure:** Change status to `'FAILED'` and show a "Retry" button.
+
+```javascript
+// SDE 2 Implementation Sketch
+const sendMessage = (text, channelId) => {
+  const tempId = crypto.randomUUID();
+  const message = { id: tempId, text, status: 'SENDING' };
+
+  // 1. Update UI (Local State)
+  dispatch(addMessageToChannel(channelId, message));
+
+  // 2. Emit via WebSocket
+  socket.emit("send_message", { tempId, text, channelId }, (response) => {
+    if (response.error) {
+       // 3a. Handle Error
+       dispatch(updateMessageStatus(tempId, 'FAILED'));
+    } else {
+       // 3b. Reconcile ID (Swap temp with real)
+       dispatch(reconcileMessage(tempId, response.realId));
+    }
+  });
+};
+```
+
+---
+
+### 4. Message Persistence: The "Offline-First" Strategy
+**The SDE 2 View:** Users expect to see their chat history even without an internet connection. `LocalStorage` is synchronous and small; we use **IndexedDB**.
+
+**The Sync Logic:**
+- **On Startup:** Load the last 50 messages from IndexedDB for instant FCP.
+- **Background:** Fetch "Newer" messages from the server since the `last_fetched_timestamp`.
+- **Message Arrival:** Whenever a new message arrives via WS, save it to IndexedDB immediately.
+
+---
+
+### 5. SDE 2 Deep Dive: Handling Race Conditions & Ordering
+Chat apps suffer from **Clock Skew** (User A's clock is 2 seconds ahead of User B's).
+
+**The Solution: Sequence Numbers or Lamport Timestamps.**
+- Do not rely on client-side timestamps for ordering.
+- The server should assign a strictly increasing **Sequence Number** to every message in a channel.
+- If the client receives message #10 and then message #12, it knows it **missed** message #11 and can trigger a specific "Gap Fill" request to the server.
+
+---
+
+### 6. SDE 2 Checklist: Resilience
+1.  **Exponential Backoff:** If the WebSocket disconnects, don't try to reconnect every 100ms. Wait 1s, then 2s, then 4s... to avoid a "Thundering Herd" attack on your own server.
+2.  **Binary Data:** For images/files, use **ArrayBuffer** over WebSockets or (better) upload to S3 via HTTP and send the URL via WebSockets.
+3.  **Presence (Who's Online):** Use a **Heartbeat Mechanism**. If the server doesn't hear a "Ping" from a client for 30 seconds, mark them as offline.
+
+### Summary
+*   **Junior view:** Send a string over a socket and append it to an array.
+*   **SDE 2 view:** It is a **Distributed Consistency** problem. We use **Optimistic Updates** with **ID Reconciliation** for UX, **Sequence Numbers** for ordering, **Redis Pub/Sub** for scaling, and **IndexedDB** for persistent offline reliability.

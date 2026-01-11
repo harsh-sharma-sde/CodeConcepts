@@ -1,0 +1,99 @@
+---
+title: NoSQL Databases (Document Stores & CAP Theorem)
+description: Understand NoSQL databases, document stores, and how the CAP theorem influences system design
+order: 86
+---
+
+To an SDE 2, **NoSQL** is not just "a database without a schema"—it is a choice to trade **Relational Integrity (ACID)** for **Horizontal Scalability** and **High Availability**.
+
+We move from the world of strict table joins to **Document Stores**, where data is modeled based on how the application consumes it, rather than how it is "theoretically" structured.
+
+---
+
+### 1. Document Stores: The BSON Mechanic
+**The SDE 2 View:** In a Document Store (like MongoDB), data is stored in **BSON** (Binary JSON). 
+
+**Mechanics:**
+Unlike a flat SQL row, BSON supports nested objects and arrays. Internally, BSON is optimized for **traversal**. It stores the "length" of fields, allowing the storage engine to "jump" over data it doesn't need to read. 
+
+#### Architectural Decision: Embedding vs. Referencing
+This is the "SQL vs NoSQL" design choice for an SDE 2.
+
+```javascript
+// 1. Embedding (Denormalization)
+// Pro: O(1) read. One database hit to get the user AND their posts.
+// Con: Document size limit (16MB in Mongo), hard to update shared data.
+{
+  "_id": 1,
+  "name": "John",
+  "posts": [
+    { "title": "Post A" }, { "title": "Post B" }
+  ]
+}
+
+// 2. Referencing (Normalization)
+// Pro: Consistent data, smaller documents.
+// Con: O(N) reads. Requires application-side "joins" or multiple round-trips.
+{
+  "_id": 1,
+  "name": "John",
+  "post_ids": [101, 102]
+}
+```
+
+---
+
+### 2. The CAP Theorem
+**The SDE 2 View:** In a distributed system, you cannot have all three of these simultaneously during a **Network Partition** (a failure in connectivity between nodes).
+
+1.  **Consistency (C):** Every read receives the most recent write or an error.
+2.  **Availability (A):** Every request receives a (non-error) response, without the guarantee that it contains the most recent write.
+3.  **Partition Tolerance (P):** The system continues to operate despite an arbitrary number of messages being dropped or delayed by the network between nodes.
+
+**The Reality:** In a distributed world, **P is mandatory**. You must choose between **CP** or **AP**.
+
+*   **CP (MongoDB default):** If a network split occurs, the "minority" side of the split stops accepting writes to ensure data consistency.
+*   **AP (DynamoDB/Cassandra):** The system stays up, allowing writes on both sides. When the network heals, the system resolves conflicts (e.g., "Last Write Wins").
+
+---
+
+### 3. SDE 2 Deep Dive: Scaling via Sharding
+**The SDE 2 View:** SQL scales **vertically** (bigger CPU/RAM). NoSQL scales **horizontally** (more servers).
+
+**Mechanics:**
+The database uses a **Shard Key** to partition data across different physical machines.
+- **Hashed Sharding:** Distributes data evenly using a hash of the key (Prevents "Hot Spots").
+- **Ranged Sharding:** Groups data by value ranges (Good for range-based queries like "All users between age 20-30").
+
+---
+
+### 4. BASE vs. ACID
+SQL follows **ACID** (Atomicity, Consistency, Isolation, Durability). 
+NoSQL usually follows **BASE**:
+*   **B**asically **A**vailable: The system guarantees availability.
+*   **S**oft state: The state of the system may change over time, even without input (due to eventual consistency).
+*   **E**ventual consistency: The system will eventually become consistent once it stops receiving input.
+
+---
+
+### 5. SDE 2 Decision Matrix: SQL vs NoSQL
+
+| Feature | SQL (Relational) | NoSQL (Document) |
+| :--- | :--- | :--- |
+| **Schema** | Rigid / Pre-defined | Flexible / Dynamic |
+| **Relationships** | Complex Joins (Server-side) | Link/Embed (App-side) |
+| **Scaling** | Vertical (Scale Up) | Horizontal (Scale Out) |
+| **Transactions** | Strong ACID | Base / Transactional support varies |
+| **Best Use Case** | Financial systems, ERP, structured data. | Social feeds, Real-time Big Data, Content Management. |
+
+---
+
+### 6. Summary Checklist for SDE 2s
+1.  **Read vs Write:** Is your app 99% reads? Embed data to avoid joins.
+2.  **Atomic Requirements:** Do you need multi-document transactions? Modern NoSQL supports them, but they are slower.
+3.  **Shard Key Selection:** If you pick a poor shard key (like a "Status" field with only 2 values), you will create a **Hot Shard**, and your horizontal scaling will fail.
+4.  **Consistency Level:** Do you need "Strong Consistency" or can your UI handle "Eventual Consistency" for a few milliseconds?
+
+### Summary
+*   **Junior view:** It's for when you don't want to define a table schema.
+*   **SDE 2 view:** It is a **Distributed Persistence Strategy** that prioritizes **Horizontal Throughput** and **Availability** over strict schema constraints, requiring careful **Data Modeling (Embedding vs Referencing)** and an understanding of **CAP Theorem trade-offs**.

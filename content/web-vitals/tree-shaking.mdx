@@ -1,0 +1,102 @@
+---
+title: Tree Shaking
+description: Understand tree shaking, how it works, and how to reduce unused JavaScript in production builds
+order: 64
+---
+
+To an SDE 2, **Tree Shaking** is a form of **Dead Code Elimination (DCE)** that relies on the **Static Structure** of ES Modules (ESM). 
+
+While traditional DCE removes unreachable code (like code after a `return` statement), Tree Shaking removes **unused exports** from the entire project. This ensures the browser only downloads, parses, and executes the code that is actually necessary for the current view.
+
+---
+
+### 1. The Under-the-Hood Mechanic: Static Analysis
+Tree shaking is only possible because of **ESM (`import` / `export`)**. 
+
+*   **CommonJS (`require`) is Dynamic:** You can do `require(path + '.js')` inside an `if` statement. The bundler cannot know which code will be needed until the app is actually running.
+*   **ESM is Static:** `import` statements must be at the top level and cannot be dynamic. This allows the bundler (Webpack, Vite, Rollup) to build a **Dependency Graph** at compile-time without executing any code.
+
+**The Workflow:**
+1.  **Parsing:** The bundler parses every file and marks every `export`.
+2.  **Tracking:** It tracks which exports are actually `import`ed by other files.
+3.  **Shaking:** Any export that has zero "incoming" imports is marked as "dead."
+4.  **Minification:** During the final build, a minifier (like Terser or esbuild) deletes the marked code from the final bundle.
+
+---
+
+### 2. Simple Code Example
+
+**`utils.js` (The Library)**
+```javascript
+export const add = (a, b) => a + b;
+
+// This function is NEVER used in our app.
+// Tree shaking will "shake" this off the bundle.
+export const subtract = (a, b) => a - b;
+```
+
+**`main.js` (The Entry Point)**
+```javascript
+import { add } from './utils';
+
+console.log(add(5, 5));
+```
+
+**The Resulting Bundle:**
+```javascript
+// The 'subtract' function is completely gone.
+const add = (a, b) => a + b;
+console.log(add(5, 5));
+```
+
+---
+
+### 3. SDE 2 Deep Dive: The "Side Effects" Problem
+The biggest obstacle to Tree Shaking is **Side Effects**. If a module does something when it’s imported (like modifying a global variable or adding a listener), the bundler cannot safely remove it, even if you don't use any of its exports.
+
+```javascript
+// polyfill.js
+window.secretKey = "12345"; // This is a side effect.
+
+export const someValue = 10;
+```
+
+If the bundler isn't sure, it **plays it safe** and keeps the code. As an SDE 2, you provide "Hints" to the bundler.
+
+#### A. `package.json` Hints
+You can tell the bundler that your entire package is "Side-Effect Free."
+```json
+{
+  "name": "my-library",
+  "sideEffects": false
+}
+```
+
+#### B. `/*#__PURE__*/` Annotations
+If you call a function at the top level, the bundler assumes it has side effects. You can mark it as "Pure" to allow tree shaking.
+```javascript
+// Without this comment, the bundler might keep this whole call
+const config = /*#__PURE__*/ initializeConfig(); 
+```
+
+---
+
+### 4. SDE 2 Performance Impact
+Tree Shaking doesn't just reduce the **Download Size** (Network); it reduces the **V8 Compile Time**.
+
+1.  **Parsing:** The browser has to turn JS text into an Abstract Syntax Tree (AST).
+2.  **Compilation:** V8 turns that AST into Bytecode.
+3.  **Execution:** The JS engine runs the code.
+
+**Less code = Smaller AST = Less Bytecode = Faster TTI (Time to Interactive).**
+
+---
+
+### 5. Common Tree Shaking "Traps"
+*   **Importing the whole object:** `import * as Utils from './utils'` can sometimes make it harder for older bundlers to shake individual functions (though modern Webpack/Vite are quite good at this now).
+*   **Class Methods:** It is very hard to tree-shake methods from a class. If you use one method of a class, the bundler usually has to include the **entire class** in the bundle.
+    *   *SDE 2 Tip:* This is why many modern libraries (like `lodash-es`) use **Functional Programming** (standalone functions) instead of large Classes.
+
+### Summary
+*   **Junior view:** It removes code I'm not using.
+*   **SDE 2 view:** It is a **Static Dependency Graph Optimization** enabled by the immutability of **ES Modules**. We maximize it by ensuring our modules are **Side-Effect Free** and avoiding **Large Class Structures** that prevent granular dead-code elimination during the **Minification** phase.

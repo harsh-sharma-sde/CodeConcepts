@@ -1,0 +1,95 @@
+---
+title: Gzip & Brotli Compression
+description: Learn how Gzip and Brotli compression work, their differences, and how they improve web performance
+order: 65
+---
+
+To an SDE 2, **Gzip** and **Brotli** are not just "compression tools"; they are **Payload Reduction Strategies** implemented at the **Network Layer** (OSI Layer 7).
+
+By compressing text-based assets (HTML, JS, CSS) before they leave the server, we trade a small amount of **Server CPU** and **Client CPU** (for decompression) to significantly reduce **Network Latency** and **Bandwidth Consumption**.
+
+---
+
+### 1. The Under-the-Hood Mechanic: HTTP Negotiation
+Compression is a "negotiated" process between the browser and the server using HTTP headers.
+
+1.  **Request:** The browser sends a header: `Accept-Encoding: gzip, deflate, br`. (Telling the server: "I understand these algorithms").
+2.  **Server Logic:** The server checks if it has a compressed version of the file.
+3.  **Response:** The server sends the file with the header: `Content-Encoding: br` (or `gzip`).
+4.  **Decompression:** The browser receives the binary stream, decompresses it into memory, and then passes it to the **V8 Parser**.
+
+---
+
+### 2. Gzip: The Industry Veteran
+**The SDE 2 View:** Gzip is based on the **DEFLATE** algorithm, which combines **LZ77** and **Huffman Coding**.
+
+**Mechanics:**
+- **LZ77:** Finds repeated strings within a "sliding window" and replaces them with a reference to the previous occurrence (e.g., instead of repeating "function" 100 times, it says "go back 500 characters and copy 8 characters").
+- **Huffman Coding:** Replaces frequently used characters with shorter bit-sequences (e.g., 'e' might be `01`, while 'z' might be `110101`).
+
+---
+
+### 3. Brotli: The Modern Standard
+**The SDE 2 View:** Developed by Google, Brotli is designed specifically for the web. It is roughly **15–20% more efficient** than Gzip for text-based assets.
+
+**Mechanics: The Static Dictionary**
+Unlike Gzip, which starts every file with an empty dictionary, Brotli comes with a **pre-defined dictionary** of common web strings (over 13,000 strings like `<html>`, `<div>`, `width:`, `display:`, etc.). 
+- Because the algorithm already "knows" these words, it doesn't need to waste space defining them in the compressed file.
+
+---
+
+### 4. SDE 2 Strategy: Static vs. Dynamic Compression
+
+#### A. Dynamic (Runtime) Compression
+The server compresses the file **on-the-fly** as the request comes in.
+- **Pro:** Works for dynamic API responses.
+- **Con:** Increases **TTFB (Time to First Byte)** because the user has to wait for the CPU to finish compressing before the first byte is sent.
+
+#### B. Static (Pre-compressed) Compression
+As an SDE 2, you perform compression during the **Build Step** (CI/CD).
+- **Pro:** Zero CPU overhead at request time. The server (Nginx/S3) simply serves the `.js.br` or `.js.gz` file directly.
+- **Con:** Requires more disk space (you store the original + gzip + brotli versions).
+
+---
+
+### 5. Implementation (Nginx Configuration)
+
+```nginx
+# SDE 2 Nginx Strategy: Static first, Fallback to Dynamic
+server {
+    # 1. Look for pre-compressed .br or .gz files on disk
+    brotli_static on;
+    gzip_static on;
+
+    # 2. If not found, compress on-the-fly for these types
+    brotli on;
+    brotli_types text/plain text/css application/javascript application/json;
+    
+    gzip on;
+    gzip_types text/plain text/css application/javascript application/json;
+}
+```
+
+---
+
+### 6. SDE 2 Comparison: Performance Trade-offs
+
+| Metric | Gzip | Brotli |
+| :--- | :--- | :--- |
+| **Compression Ratio** | Good | **Excellent** (~20% smaller) |
+| **Compression Speed** | Fast | Slow (at high levels) |
+| **Decompression Speed** | Very Fast | **Very Fast** |
+| **Browser Support** | 99% (Universal) | ~96% (Modern browsers only) |
+
+**The SDE 2 Choice:**
+Use **Brotli** as the primary target. It is objectively better for JS and CSS because of the built-in dictionary. Always keep **Gzip** as a fallback for the ~4% of users on ancient browsers (like IE11).
+
+---
+
+### 7. Why not compress Images?
+As an SDE 2, you never Gzip/Brotli images (JPG, PNG, WebP).
+- **The Reason:** These formats are **already compressed**. Applying Gzip to an image often makes the file **larger** because of the overhead of the Gzip headers, and it wastes CPU cycles for zero gain.
+
+### Summary
+*   **Junior view:** It makes my JS files smaller for the network.
+*   **SDE 2 view:** It is a **CPU-for-Bandwidth Trade-off**. We prioritize **Static Brotli Compression** at build-time to minimize **TTFB** and maximize **Network Throughput**, utilizing **HTTP Content Negotiation** to ensure cross-browser compatibility.

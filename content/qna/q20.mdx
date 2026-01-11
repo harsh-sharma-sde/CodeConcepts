@@ -1,0 +1,112 @@
+---
+title: Question 20 (Backend)
+description: Learn how Node.js handles heavy CPU-bound operations and strategies to prevent event loop blocking
+order: 87
+---
+
+To an SDE 2, the answer is: **Node.js doesn't handle them well on the Main Thread.**
+
+Because Node.js is built on the **Single-Threaded Event Loop** architecture, a CPU-intensive task (like image processing, heavy cryptography, or complex sorting) will block the loop. This means the engine cannot pick up new I/O events, execute timers, or respond to new HTTP requests until the math is finished.
+
+Here is how we solve this at an architectural level.
+
+---
+
+### 1. The Problem: Event Loop Blockage
+**The SDE 2 View:** When a "Long Task" (anything > 50ms) runs on the main thread, it prevents the **Libuv** event loop from moving to the next phase. This leads to **Main Thread Starvation**.
+
+---
+
+### 2. Solution A: Worker Threads (Parallelism)
+**The SDE 2 View:** This is the preferred method for CPU tasks within a single Node.js process. Each Worker Thread runs in its own **V8 Isolate**.
+
+**Mechanics:**
+- Each worker has its own heap, its own event loop, and its own V8 engine instance.
+- They communicate via **Message Passing** (Structured Clone Algorithm) or **Shared Memory** (`SharedArrayBuffer`).
+- **Optimization:** Use a **Thread Pool** (like the `piscina` library) to avoid the overhead of spawning/destroying threads on every request.
+
+```javascript
+// main.js
+const { Worker } = require('worker_threads');
+
+function runHeavyTask(data) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker('./worker.js', { workerData: data });
+    worker.on('message', resolve);
+    worker.on('error', reject);
+  });
+}
+
+// worker.js
+const { parentPort, workerData } = require('worker_threads');
+
+function calculateFibonacci(n) {
+  if (n <= 1) return n;
+  return calculateFibonacci(n - 1) + calculateFibonacci(n - 2);
+}
+
+const result = calculateFibonacci(workerData);
+parentPort.postMessage(result);
+```
+
+---
+
+### 3. Solution B: Yielding to the Event Loop (Concurrency)
+**The SDE 2 View:** If the task can be broken down into chunks, we use **Synchronous Partitioning**. This isn't parallelism, but it prevents the event loop from being "blocked" for a single long duration.
+
+**Mechanics:**
+We use `setImmediate()` or `process.nextTick()` to "yield" the thread back to Node.js. Node can then handle a few pending I/O requests before returning to our heavy calculation.
+
+```javascript
+function processMassiveArray(array) {
+  const CHUNK_SIZE = 1000;
+  let index = 0;
+
+  function doChunk() {
+    const end = Math.min(index + CHUNK_SIZE, array.length);
+    for (; index < end; index++) {
+      // Process element...
+    }
+
+    if (index < array.length) {
+      // Yield control back to the event loop so it can handle I/O
+      setImmediate(doChunk); 
+    }
+  }
+
+  doChunk();
+}
+```
+
+---
+
+### 4. Solution C: Child Processes (Isolation)
+**The SDE 2 View:** If the task is extremely unstable or requires a non-JS environment (like a Python script or a C++ binary), we use `child_process.fork()`.
+
+**Mechanics:**
+- Spawns a full OS process. 
+- **Pros:** Total fault isolation. If the child crashes, the parent lives. 
+- **Cons:** High memory overhead (~30MB+ per process) and slower IPC (Inter-Process Communication) compared to Worker Threads.
+
+---
+
+### 5. Solution D: Native C++ Addons
+**The SDE 2 View:** For maximum performance, we move the logic out of JavaScript entirely using **N-API (Node-API)**.
+
+**Mechanics:**
+Write the heavy logic in C++ or Rust and compile it into a `.node` binary. 
+- V8 can call these functions directly.
+- C++ can utilize multi-threading (via `pthreads` or `std::thread`) completely hidden from the Node.js event loop.
+
+---
+
+### SDE 2 Summary Checklist
+
+1.  **Is it a one-off heavy calculation?** Use **Worker Threads**.
+2.  **Is it a stream of data (like video transcoding)?** Use **Native Addons** or pipe into a **Child Process** (`ffmpeg`).
+3.  **Does the task need to be distributed?** Move the work to a separate **Microservice** or **Serverless Function** (AWS Lambda) entirely to protect the API Gateway's resources.
+4.  **Are you using `SharedArrayBuffer`?** If yes, ensure you use the **Atomics API** to prevent race conditions when multiple threads access the same memory address.
+
+### Summary
+*   **Junior view:** Node is bad at math; use something else.
+*   **SDE 2 view:** Node handles CPU tasks by offloading them to **V8 Isolates (Workers)**, **OS-level processes (Child Process)**, or by **partitioning logic** to prevent **Event Loop Starvation**, ensuring the system remains responsive to I/O while the math is being computed.

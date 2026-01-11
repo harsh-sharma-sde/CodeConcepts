@@ -1,0 +1,97 @@
+---
+title: Two Pointers Technique
+description: Learn the two pointers algorithm, how it improves efficiency, and common problems to solve using it
+order: 93
+---
+
+To an SDE 2, the **Two Pointers** pattern is a strategy for **Reducing the Search Space** and performing **In-place Data Manipulation**. 
+
+While the brute-force approach to searching pairs or sub-sequences usually results in $O(N^2)$ (nested loops), Two Pointers exploits the **Ordering** or **Structure** of the data to achieve $O(N)$ linear time complexity with **$O(1)$ Space Complexity**.
+
+---
+
+### 1. The Core Mechanic: Search Space Reduction
+Imagine you are looking for two numbers in a **sorted** array that sum to a target.
+- **Brute Force:** You check every possible pair. You are exploring an $N \times N$ matrix of possibilities.
+- **Two Pointers:** You start one pointer at the `left` (smallest) and one at the `right` (largest). 
+    - If the sum is too high, you *know* that the current `right` element cannot be part of *any* valid pair with the current `left` or any element larger than it. You move `right--`.
+    - By moving a pointer, you are **discarding an entire row or column** of the $N \times N$ search matrix without ever looking at the values.
+
+---
+
+### 2. Common Patterns
+
+#### A. Converging Pointers (Opposite Ends)
+Used when the array is sorted and you need to find a pair.
+*   **Use Cases:** Two Sum (Sorted), Valid Palindrome, Reverse Array.
+
+#### B. Fast and Slow Pointers (Hare & Tortoise)
+One pointer moves faster than the other (e.g., `fast = fast.next.next` and `slow = slow.next`).
+*   **Use Cases:** Cycle detection in Linked Lists, finding the middle of a list, Happy Number.
+
+#### C. Independent Pointers (Same Direction)
+Used to process two different arrays or "partition" one array in place.
+*   **Use Cases:** Merge Sorted Arrays, Remove Duplicates (in-place), Subsequence matching.
+
+---
+
+### 3. Simple Code Example (Two Sum - Sorted)
+**Problem:** Find if two numbers in a sorted array add up to a target.
+
+```javascript
+function hasPairWithSum(nums, target) {
+  let left = 0;
+  let right = nums.length - 1;
+
+  while (left < right) {
+    const currentSum = nums[left] + nums[right];
+
+    if (currentSum === target) {
+      return [left, right]; // Found the pair
+    }
+
+    if (currentSum < target) {
+      // Sum is too small, we need a larger value.
+      // Move the 'left' pointer to increase the sum.
+      left++;
+    } else {
+      // Sum is too large, we need a smaller value.
+      // Move the 'right' pointer to decrease the sum.
+      right--;
+    }
+  }
+
+  return null;
+}
+
+// Time: O(n) - We only traverse the array once.
+// Space: O(1) - No extra memory allocated, regardless of array size.
+```
+
+---
+
+### 4. SDE 2 Deep Dive: Performance & Hardware
+
+#### A. Space Complexity ($O(1)$)
+In an SDE 2 world, "In-place" is king. If you are processing a 1GB array on a system with limited RAM, creating a `Set` or a `Map` (like in a standard Two Sum) might trigger a **Memory Limit Exceeded** or cause heavy **Garbage Collection (GC)**. Two Pointers uses zero extra memory, making it highly "stable" for large data.
+
+#### B. Branch Prediction
+Modern CPUs use **Branch Prediction** to guess which way an `if` statement will go.
+- In a **sorted** array, the `left++` or `right--` moves are often "predictable" for the CPU.
+- This leads to fewer **Pipeline Stalls** compared to algorithms that jump randomly through memory (like Hash Map lookups or recursive tree traversals).
+
+#### C. Two Pointers vs. Sliding Window
+- **Sliding Window** is used when you care about the **elements between** the pointers (a range/sub-array).
+- **Two Pointers** is used when you care about the **specific elements at** the pointers (a pair/comparison).
+
+---
+
+### 5. SDE 2 Summary Checklist
+1.  **Is the data sorted?** If yes, Converging Two Pointers is likely the $O(N)$ solution.
+2.  **Am I asked to modify an array in-place?** Use Two Pointers (one to read, one to write).
+3.  **Am I dealing with a Linked List?** Fast/Slow pointers are the standard for finding cycles or the middle node.
+4.  **Can I avoid a Hash Map?** If memory is a constraint, sorting the array once ($O(N \log N)$) and using Two Pointers ($O(N)$) is often better than using $O(N)$ space for a Map.
+
+### Summary
+*   **Junior view:** It's using two variables to keep track of indices.
+*   **SDE 2 view:** It is a **Search Space Pruning** technique that leverages **Data Order** to achieve **$O(1)$ Space Complexity**, minimizing **Heap Pressure** and maximizing **CPU Cache Efficiency**.

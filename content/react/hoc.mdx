@@ -1,0 +1,109 @@
+---
+title: Higher Order Components (HOC)
+description: Learn how Higher Order Components work in React, their use cases, internals, and comparison with hooks
+order: 20
+---
+
+To an SDE 2, a **Higher-Order Component (HOC)** is a pattern derived from **Functional Programming**—specifically the concept of **Higher-Order Functions**. 
+
+An HOC is a pure function that takes a component and returns a new component. It is a tool for **Logic Abstraction** and **Cross-Cutting Concerns** (like Auth, Logging, or Theming) without using inheritance.
+
+---
+
+### 1. The Core Mechanic: Component Composition
+In React, components are just functions (or classes). An HOC is essentially a **Decorator** for these functions. 
+
+Instead of copying logic into every component, you "wrap" the component in a factory function. This follows the **Open-Closed Principle**: the original component is closed for modification but open for extension.
+
+---
+
+### 2. Simple Code Example (Auth HOC)
+
+```javascript
+// The HOC (Factory Function)
+function withAuth(WrappedComponent) {
+    return function AuthenticatedComponent(props) {
+        const isAuthenticated = localStorage.getItem('token');
+
+        if (!isAuthenticated) {
+            return <div>Please log in to see this content.</div>;
+        }
+
+        // Props Proxy: Passing through props and adding new ones
+        return <WrappedComponent {...props} isAdmin={true} />;
+    };
+}
+
+// Target Component
+const Dashboard = ({ user, isAdmin }) => <div>Welcome {user}! Admin: {String(isAdmin)}</div>;
+
+// Enhanced Component
+const ProtectedDashboard = withAuth(Dashboard);
+
+// Usage
+// <ProtectedDashboard user="John" />
+```
+
+---
+
+### 3. Under the Hood: Two Patterns
+
+#### A. Props Proxy (Most Common)
+The HOC sits "on top" of the wrapped component. It intercepts props, transforms them, and passes them down.
+*   **Use case:** Adding data from a Redux store, handling loading states, or conditional rendering.
+*   **Mechanic:** Uses **Composition**.
+
+#### B. Inheritance Inversion (Rare/Advanced)
+The HOC actually `extends` the wrapped component class. 
+*   **Mechanic:** `class HOC extends WrappedComponent`.
+*   **Capability:** It can access the `state`, `props`, and `lifecycle` methods of the wrapped component via `super`.
+*   **Note:** Only works with Class components and is generally discouraged in modern React.
+
+---
+
+### 4. SDE 2 Deep Dive: The "Gotchas"
+
+#### 1. Static Method Hoisting
+When you wrap a component, the new component is a different object. Any **static methods** defined on the original component are lost.
+*   **Solution:** You must manually copy them over or use a library like `hoist-non-react-statics`.
+
+#### 2. Refs don't pass through
+`ref` is not a prop; it’s a "special" attribute like `key`. If you add a ref to an HOC, it will point to the wrapper, not the wrapped component.
+*   **Solution:** Use `React.forwardRef`.
+
+```javascript
+function withLog(WrappedComponent) {
+  class LogProps extends React.Component {
+    render() {
+      const {forwardedRef, ...rest} = this.props;
+      return <WrappedComponent ref={forwardedRef} {...rest} />;
+    }
+  }
+  return React.forwardRef((props, ref) => {
+    return <LogProps {...props} forwardedRef={ref} />;
+  });
+}
+```
+
+#### 3. Wrapper Hell
+Excessive use of HOCs leads to a deeply nested component tree in React DevTools (e.g., `withAuth(withTheme(withLogger(MyComponent)))`).
+*   **Solution:** Ensure you set a `displayName` (e.g., `withAuth(Dashboard)`) to make debugging easier.
+
+---
+
+### 5. HOCs vs. Hooks (The SDE 2 Choice)
+
+| Feature | HOCs | Hooks |
+| :--- | :--- | :--- |
+| **Logic Sharing** | Shared via Props/Wrapping | Shared via Function calls |
+| **DOM Structure** | Adds extra nodes to the tree | No extra nodes |
+| **Modification** | Can do Conditional Rendering | Cannot return different JSX |
+| **Source** | Good for Third-party components | Best for internal component logic |
+
+**Architectural Decision:**
+- Use **Hooks** for most logic sharing (state, fetching, event listeners).
+- Use **HOCs** when you need to wrap a component you don't own, or when you need to perform **Conditional Rendering** (like the Auth example) that prevents the child component from even mounting.
+
+### Summary
+*   **Junior view:** It's a way to reuse code.
+*   **SDE 2 view:** It is a **Structural Pattern** using a **Props Proxy** to inject behavior or manipulate the render tree, requiring careful handling of **Static Hoisting** and **Ref Forwarding** to avoid breaking the component's interface.

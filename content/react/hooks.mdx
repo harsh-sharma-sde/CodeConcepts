@@ -1,0 +1,128 @@
+---
+title: React Hooks – Internals of `useEffect`
+description: Understand how `useEffect` works internally, including scheduling, dependency comparison, and cleanup execution
+order: 19
+---
+
+To an SDE 2, **Hooks** are not magic. They are a **Singly Linked List** of state objects attached to the **Fiber node** currently being processed. 
+
+The reason you cannot call hooks inside loops or conditions is that React relies entirely on the **order of execution** to map the correct state to the correct hook.
+
+---
+
+### 1. The Data Structure: Where do hooks live?
+Every Fiber node has a property called `memoizedState`. In a functional component, this is not just a single value—it is the head of a linked list of "Hook" objects.
+
+**The Internal Hook Object:**
+```javascript
+{
+  memoizedState: any,  // The current state/effect
+  baseState: any,
+  baseQueue: Update,
+  queue: UpdateQueue,
+  next: Hook | null    // Pointer to the next hook in the list
+}
+```
+
+---
+
+### 2. `useEffect` Internals: The "Effect" Object
+When you call `useEffect`, React doesn't run it immediately. It creates an **Effect** object and pushes it into a specific "update queue" on the Fiber.
+
+**The Effect Object:**
+```javascript
+{
+  tag: number,       // HookFlags (e.g., Passive for useEffect, Layout for useLayoutEffect)
+  create: Function,  // The actual function you passed
+  destroy: Function, // The cleanup function (returned by create)
+  deps: Array,       // Dependency array
+  next: Effect       // Circular linked list of effects
+}
+```
+
+---
+
+### 3. The Lifecycle of an Effect
+
+#### Phase A: Mount (`mountEffect`)
+1.  React creates a new Hook object and appends it to the Fiber's linked list.
+2.  It creates an Effect object using your callback and dependencies.
+3.  It attaches this effect to the Fiber's `updateQueue`.
+4.  It marks the Fiber with a **"Passive Effect" Flag**.
+
+#### Phase B: Update (`updateEffect`)
+1.  React moves the "current hook" pointer to the next hook in the list.
+2.  It performs a **Shallow Comparison** (`Object.is`) between the old dependencies and new dependencies.
+3.  **If they are the same:** It keeps the old effect but doesn't mark it for execution.
+4.  **If they differ:** It creates a new effect and marks the Fiber with a "Passive Effect" Flag, signaling that it needs to run after the commit.
+
+---
+
+### 4. When does the code actually run?
+As an SDE 2, the timing of `useEffect` is critical. It is a **Passive Effect**.
+
+1.  **Render Phase:** React builds the Fiber tree and identifies which components have effects.
+2.  **Commit Phase:** React applies changes to the Real DOM (Synchronous).
+3.  **Post-Commit:** Once the browser has painted the screen, React's **Scheduler** triggers the `useEffect` callbacks asynchronously.
+    *   *Note:* This prevents blocking the UI thread. `useLayoutEffect` differs because it runs **synchronously after DOM mutations but before browser paint.**
+
+---
+
+### 5. The Cleanup Mechanic
+Before React runs a `useEffect` callback for a second time (or on unmount), it checks if the previous effect has a `destroy` (cleanup) function.
+
+**Mechanics:**
+- It executes the `destroy` function of the **previous** render's effect.
+- Then, it executes the `create` function of the **current** render's effect.
+
+```javascript
+useEffect(() => {
+  const socket = connect(); 
+  return () => socket.disconnect(); // This is stored in effect.destroy
+}, [userId]);
+```
+
+---
+
+### 6. SDE 2 Deep Dive: Why "Rules of Hooks" Exist
+If you wrap a hook in an `if` statement:
+```javascript
+if (condition) {
+  useEffect(cb1); // Hook 1
+}
+useEffect(cb2);   // Hook 2
+```
+If `condition` is `true` on Render 1, the linked list is: `[Effect 1] -> [Effect 2]`.
+If `condition` is `false` on Render 2, React expects the first hook it sees to be `Effect 1`. But it sees the code for `Effect 2` instead. The "current hook" pointer is now misaligned, and React will attempt to compare the dependencies of `Effect 2` against the state of `Effect 1`, causing a crash or a silent, catastrophic state leak.
+
+---
+
+### 7. Implementation Sketch (Pseudo-code)
+
+```javascript
+let componentFiber = { memoizedState: null, updateQueue: null };
+let workInProgressHook = null;
+
+function useEffect(create, deps) {
+  const hook = mountWorkInProgressHook(); // Get current hook in list
+  const nextDeps = deps === undefined ? null : deps;
+  const prevEffect = hook.memoizedState;
+
+  if (prevEffect !== null) {
+    if (areHookInputsEqual(nextDeps, prevEffect.deps)) {
+       return; // Optimization: bail out
+    }
+  }
+
+  // Push effect to be executed after paint
+  const effect = { create, deps: nextDeps, destroy: undefined };
+  componentFiber.updateQueue = pushEffect(effect);
+  hook.memoizedState = effect;
+}
+```
+
+### Summary
+*   **Hooks are a Linked List** stored on the Fiber node.
+*   **`useEffect`** creates a side-effect descriptor that is queued.
+*   **Execution** is decoupled from rendering; it is scheduled to run **after paint** to avoid jank.
+*   **Cleanup** is a "previous-render-first" operation to ensure resource integrity.

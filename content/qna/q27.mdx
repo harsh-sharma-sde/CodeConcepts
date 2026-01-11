@@ -1,0 +1,115 @@
+---
+title: Question 27 (DSA)
+description: Learn how to implement debounce and throttle functions to optimize performance of high-frequency events
+order: 99
+---
+
+Both **Debounce** and **Throttle** are techniques used to control how many times a function is executed over time. They are essential for performance when dealing with high-frequency events like scrolling, resizing, or typing.
+
+---
+
+### 1. Debounce
+**The Logic:** "Wait until I'm done."
+Debouncing ensures that a function is only called after a certain amount of time has passed since the last time it was invoked.
+
+**Use Case:** A search bar auto-complete. You don't want to hit the API on every keystroke, only when the user stops typing for 300ms.
+
+```javascript
+function debounce(func, delay) {
+  let timeoutId;
+
+  return function(...args) {
+    // If the function is called again, clear the previous timer
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+
+    // Set a new timer
+    timeoutId = setTimeout(() => {
+      func.apply(this, args);
+    }, delay);
+  };
+}
+
+// Example Usage:
+const handleSearch = debounce((query) => {
+  console.log("Searching for:", query);
+}, 300);
+
+// If called 5 times rapidly, it only logs ONCE after 300ms of silence.
+```
+
+---
+
+### 2. Throttle
+**The Logic:** "Only once every X milliseconds."
+Throttling ensures that a function is called at most once in a specified time interval. It "throttles" the stream of events.
+
+**Use Case:** A "Scroll to Top" button visibility check or a window resize handler. You want to update the UI regularly, but not 100 times per second.
+
+#### Option A: Simple Implementation (Leading Edge)
+This version fires the first call immediately and then ignores subsequent calls for the duration.
+
+```javascript
+function throttle(func, limit) {
+  let inThrottle = false;
+
+  return function(...args) {
+    if (!inThrottle) {
+      func.apply(this, args);
+      inThrottle = true;
+      
+      setTimeout(() => {
+        inThrottle = false;
+      }, limit);
+    }
+  };
+}
+```
+
+#### Option B: Robust Implementation (Leading & Trailing)
+The simple version above ignores the very last event if it happens during the "cooldown." A production-grade throttle (like Lodash's) ensures the last call is eventually executed.
+
+```javascript
+function throttle(func, limit) {
+  let lastFunc;
+  let lastRan;
+
+  return function(...args) {
+    const context = this;
+
+    if (!lastRan) {
+      func.apply(context, args);
+      lastRan = Date.now();
+    } else {
+      clearTimeout(lastFunc);
+      lastFunc = setTimeout(function() {
+        if ((Date.now() - lastRan) >= limit) {
+          func.apply(context, args);
+          lastRan = Date.now();
+        }
+      }, limit - (Date.now() - lastRan));
+    }
+  };
+}
+
+// Example Usage:
+const handleScroll = throttle(() => {
+  console.log("Scroll position updated");
+}, 1000);
+```
+
+---
+
+### Summary Comparison
+
+| Feature | Debounce | Throttle |
+| :--- | :--- | :--- |
+| **Analogy** | An Elevator: It waits for the last person to get on and a period of silence before closing the doors. | A Faucet: Even if you turn it on full blast, it only lets out one drop every second. |
+| **Execution** | Executes at the **end** of the burst of events. | Executes **linearly** during a burst of events. |
+| **Best For** | Typing (Input), Window Resizing. | Scrolling, Mouse Move, Button Spamming. |
+| **Goal** | Grouping many events into one. | Limiting the rate of event execution. |
+
+### When to use which?
+*   If you want the action to happen **after** the user stops doing something: **Debounce**.
+*   If you want the action to happen **regularly during** a continuous activity: **Throttle**.

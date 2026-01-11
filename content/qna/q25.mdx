@@ -1,0 +1,113 @@
+---
+title: Question 25 (DSA)
+description: Learn how to implement a deep clone function in JavaScript to copy objects or arrays without reference sharing
+order: 97
+---
+
+Implementing a deep clone function in JavaScript is a classic engineering task. There are three main ways to do it, depending on your environment and requirements.
+
+### 1. The Modern Standard: `structuredClone()`
+If you are working in a modern browser (2022+) or Node.js 17+, you should use the built-in `structuredClone` function. It is optimized by the engine and handles circular references.
+
+```javascript
+const original = {
+  date: new Date(),
+  set: new Set([1, 2, 3]),
+  map: new Map([['a', 1]]),
+  arr: [{ x: 1 }]
+};
+
+const clone = structuredClone(original);
+
+console.log(clone === original); // false
+console.log(clone.date === original.date); // false
+```
+*Note: It cannot clone functions or DOM nodes.*
+
+---
+
+### 2. The Robust Custom Implementation (Recursive)
+If you need to support older environments or have specific logic (like handling functions), you need a recursive function. This implementation handles **Circular References** using a `WeakMap`.
+
+```javascript
+function deepClone(obj, hash = new WeakMap()) {
+  // 1. Handle primitives, null, and undefined
+  if (Object(obj) !== obj) return obj;
+
+  // 2. Handle Circular References
+  if (hash.has(obj)) return hash.get(obj);
+
+  let result;
+
+  // 3. Handle Special Types (Date, RegExp, etc.)
+  if (obj instanceof Date) {
+    result = new Date(obj);
+  } else if (obj instanceof RegExp) {
+    result = new RegExp(obj.source, obj.flags);
+  } else if (obj instanceof Set) {
+    result = new Set();
+    obj.forEach(val => result.add(deepClone(val, hash)));
+  } else if (obj instanceof Map) {
+    result = new Map();
+    obj.forEach((val, key) => result.set(key, deepClone(val, hash)));
+  } else {
+    // 4. Handle Arrays and Plain Objects
+    result = Array.isArray(obj) ? [] : Object.create(Object.getPrototypeOf(obj));
+  }
+
+  // Record object in hash to handle circularity
+  hash.set(obj, result);
+
+  // 5. Recursively clone properties (including Symbols)
+  const keys = [...Object.keys(obj), ...Object.getOwnPropertySymbols(obj)];
+  
+  for (const key of keys) {
+    result[key] = deepClone(obj[key], hash);
+  }
+
+  return result;
+}
+
+// --- Example Usage ---
+const user = {
+  name: "Alice",
+  meta: { age: 25 },
+  items: [1, 2],
+};
+user.self = user; // Circular reference
+
+const clonedUser = deepClone(user);
+console.log(clonedUser.meta !== user.meta); // true (deep copy)
+console.log(clonedUser.self === clonedUser); // true (circularity preserved)
+```
+
+---
+
+### 3. The "Quick & Dirty" Way: `JSON.parse`
+This is commonly used for simple data objects, but it has significant limitations.
+
+```javascript
+const clone = JSON.parse(JSON.stringify(obj));
+```
+
+**Why you should usually avoid this:**
+*   **Data Loss:** It removes functions and `undefined`.
+*   **Broken Types:** `Date` objects become strings.
+*   **Fails on Circularity:** It throws a `TypeError` if an object references itself.
+*   **Infinity/NaN:** `NaN` and `Infinity` become `null`.
+
+---
+
+### Comparison Table
+
+| Feature | `JSON.parse` | `structuredClone` | Custom Recursive |
+| :--- | :--- | :--- | :--- |
+| **Circular Refs** | ❌ Throws error | ✅ Supported | ✅ Supported (via Map) |
+| **Dates / RegEx** | ❌ Becomes string | ✅ Supported | ✅ Supported (if manual) |
+| **Functions** | ❌ Removed | ❌ Throws error | ⚠️ Usually kept as ref |
+| **Performance** | Fast (Native) | Fastest (Native) | Slower (JS overhead) |
+
+### Which one should I use?
+1.  **Production apps:** Use `structuredClone`. It's the standard.
+2.  **Simple state (Redux/React):** If you know your data is only JSON-safe types, `JSON.parse(JSON.stringify())` is acceptable.
+3.  **Interview/Library development:** Use the **Recursive Implementation** to demonstrate your understanding of `WeakMap`, prototypes, and type checking.

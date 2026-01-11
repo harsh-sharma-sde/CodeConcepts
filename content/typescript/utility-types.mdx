@@ -1,0 +1,141 @@
+---
+title: TypeScript Utility Types (Pick, Omit, Partial)
+description: Learn how to use TypeScript utility types for safer and cleaner code in SDE-2 level projects
+order: 9
+---
+
+For an SDE 2, TypeScript Utility types are not just "helpers"; they are **Higher-Order Types**. They are implemented using **Mapped Types** and **Conditional Types**.
+
+To understand them, you must understand the "Looping" and "Filtering" logic that happens inside the TypeScript compiler during static analysis.
+
+---
+
+### 1. Partial: The "Optional" Modifier
+**The SDE 2 View:** `Partial<T>` uses a **Mapped Type** to iterate over all keys of an interface and programmatically add the `?` (optional) modifier to each property.
+
+**Under the Hood:**
+```typescript
+// How TS defines it internally:
+type Partial<T> = {
+    [P in keyof T]?: T[P];
+};
+```
+- `keyof T`: Gets a union of all property names (e.g., `"id" | "name"`).
+- `P in ...`: The "loop" mechanism. It maps over every string in the union.
+- `T[P]`: **Indexed Access**. It looks up the type of that property.
+
+**Code Example:**
+```typescript
+interface User {
+    id: number;
+    name: string;
+    email: string;
+}
+
+// SDE 2 Use Case: An update function where we only send changed fields
+function updateUser(id: number, changes: Partial<User>) {
+    // 'changes' now allows { name: "Bob" } without needing 'email'
+}
+```
+
+---
+
+### 2. Pick: The "Sub-setting" Logic
+**The SDE 2 View:** `Pick<T, K>` creates a new type by filtering the keys of `T` based on a second generic `K`, which must be a subset of the keys of `T`.
+
+**Under the Hood:**
+```typescript
+type Pick<T, K extends keyof T> = {
+    [P in K]: T[P];
+};
+```
+Notice `K extends keyof T`. This is a **Generic Constraint**. It ensures you can't "Pick" a property that doesn't exist on the original object.
+
+**Code Example:**
+```typescript
+// SDE 2 Use Case: Creating a "Preview" type for a UI component 
+// to avoid passing massive objects.
+type UserPreview = Pick<User, "name" | "email">;
+
+const preview: UserPreview = {
+    name: "Alice",
+    email: "alice@example.com"
+};
+```
+
+---
+
+### 3. Omit: The "Exclusion" Logic
+**The SDE 2 View:** `Omit` is a bit more complex. It combines `Pick` with a utility called `Exclude`. It literally says: *"Exclude these keys from the key union, then Pick the ones that are left."*
+
+**Under the Hood:**
+```typescript
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+```
+
+**What is `Exclude`?**
+This uses **Distributive Conditional Types**:
+```typescript
+type Exclude<T, U> = T extends U ? never : T;
+```
+If `T` is in `U`, return `never` (delete it); otherwise, keep `T`.
+
+**Code Example:**
+```typescript
+// SDE 2 Use Case: Stripping sensitive data before sending an object to the client.
+type PublicUser = Omit<User, "id" | "internalMetadata">;
+```
+
+---
+
+### 4. Record: The "Dictionary" Generator
+**The SDE 2 View:** `Record<K, T>` is used to define the type of a map or dictionary. It maps a set of keys `K` to a specific value type `T`.
+
+**Under the Hood:**
+```typescript
+type Record<K extends keyof any, T> = {
+    [P in K]: T;
+};
+```
+
+**Code Example:**
+```typescript
+type PageName = "home" | "about" | "contact";
+
+interface PageConfig {
+    title: string;
+}
+
+const nav: Record<PageName, PageConfig> = {
+    home: { title: "Welcome" },
+    about: { title: "About Us" },
+    contact: { title: "Get in Touch" }
+};
+```
+
+---
+
+### SDE 2 Knowledge: Why these matter for Architecture
+
+#### 1. Avoid Type Duplication (DRY)
+Without Utility types, you end up creating `User`, `UserUpdate`, `UserPreview`, etc., manually. If you add a field to `User`, you have to update 5 interfaces. Using `Pick` or `Partial` creates a **Single Source of Truth**.
+
+#### 2. Performance (Compiler)
+While these are powerful, deeply nested Utility types (like a `DeepPartial` or recursive `Omit`) can slow down the TypeScript compiler in very large monorepos because the compiler has to resolve the mapped types every time the file is checked.
+
+#### 3. Identity vs. Structural
+Remember: These types exist only in the **Type Space**. At runtime (in JavaScript), the object still has all its properties. `Omit` does NOT delete properties from the object; it only makes the compiler "blind" to them.
+
+```typescript
+const user = { id: 1, name: "Alice" };
+const publicUser = user as Omit<typeof user, "id">;
+
+console.log(publicUser.id); // TS Error: Property 'id' does not exist
+console.log((publicUser as any).id); // JS Runtime: 1 (It's still there!)
+```
+
+### Summary of Mechanics
+- **Mapped Types (`[P in K]`)**: Like a `forEach` loop for keys.
+- **Conditional Types (`T extends U ? A : B`)**: Like an `if/else` for types.
+- **Indexed Access (`T[P]`)**: Like looking up a value in an object by key.
+- **Type Erasure**: None of this logic survives the transpilation to `.js`.

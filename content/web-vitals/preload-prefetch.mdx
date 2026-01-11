@@ -1,0 +1,97 @@
+---
+title: Preload vs Prefetch
+description: Understand preload and prefetch, how they differ, and how to use them to improve performance
+order: 68
+---
+
+To an SDE 2, **Preload** and **Prefetch** are **Resource Hints** used to override the browser’s default **Prioritization Logic**. They allow us to optimize the **Critical Rendering Path** by manipulating the browser's **Preload Scanner** and its internal **Resource Scheduler**.
+
+---
+
+### 1. Preload (`rel="preload"`)
+**The SDE 2 View:** Preload is a "Mandatory Fetch" for a resource needed on the **current page**. You use it to tell the browser about a high-priority asset that its scanner hasn't discovered yet (like a font hidden in CSS or a hero image).
+
+**Mechanics:**
+- **High Priority:** The browser assigns a high priority to the request and downloads it immediately.
+- **Memory Cache:** The resource is stored in the **Memory Cache**, tied to the current document.
+- **Execution:** Preload *only* fetches the bytes; it doesn't execute the script or apply the CSS. You must still "use" it later in your code.
+
+```html
+<head>
+  <!-- Mandatory 'as' attribute tells the browser the type for prioritization -->
+  <link rel="preload" href="/fonts/brand-font.woff2" as="font" type="font/woff2" crossorigin>
+  
+  <!-- Preloading the LCP image to eliminate the 'Discovery Delay' -->
+  <link rel="preload" href="/images/hero-banner.webp" as="image" fetchpriority="high">
+</head>
+```
+
+**SDE 2 Warning:** If you preload a resource but don't use it within 3 seconds of the `window.load` event, Chrome will trigger a console warning. You are wasting the user's bandwidth and "crowding" the network pipe.
+
+---
+
+### 2. Prefetch (`rel="prefetch"`)
+**The SDE 2 View:** Prefetch is a "Speculative Fetch" for a resource likely needed for the **next navigation**. It is a low-priority hint used to improve the performance of subsequent pages.
+
+**Mechanics:**
+- **Low Priority:** The browser only initiates the fetch during **Idle Time** (when the current page has finished loading and the main thread is quiet).
+- **HTTP Cache:** The resource is stored in the **Disk/HTTP Cache** (not memory). It is intended to persist across sessions.
+
+```html
+<head>
+  <!-- Prefetching the code for the 'Dashboard' page while the user is on 'Login' -->
+  <link rel="prefetch" href="/js/dashboard-chunk.js">
+</head>
+```
+
+---
+
+### 3. SDE 2 Deep Dive: The Preload Scanner
+The browser's main parser is slow because it has to execute scripts as it finds them. To solve this, browsers use a **Preload Scanner**—a secondary, lightweight parser that scans the HTML ahead of the main parser just to find URLs to start downloading.
+
+*   **Preload** is used when you know the scanner won't find the resource (e.g., an image defined in a separate CSS file).
+*   **Prefetch** is used when the scanner shouldn't care about the resource *yet*.
+
+---
+
+### 4. Comparison: The Priority Table
+
+| Hint | Scope | Priority | Cache Layer | Use Case |
+| :--- | :--- | :--- | :--- | :--- |
+| **Preload** | Current Page | **High** | Memory Cache | Critical fonts, Hero images, Critical JS. |
+| **Prefetch** | Next Page | **Low/Idle** | HTTP/Disk Cache | Next-page assets, large libraries. |
+
+---
+
+### 5. Advanced Mechanics: `as` and `fetchpriority`
+
+#### The `as` Attribute
+As an SDE 2, you must always provide the `as` attribute. 
+1.  **Security:** It tells the browser if it needs to send a Content Security Policy (CSP) check.
+2.  **Prioritization:** A preloaded `as="style"` gets a higher priority than `as="image"`.
+3.  **Correct Headers:** It ensures the browser sends the correct `Accept` headers.
+
+#### `fetchpriority` (The SDE 2 Fine-tuner)
+Modern browsers support the `fetchpriority` attribute on preload links. This allows you to differentiate between two high-priority assets.
+
+```html
+<!-- This image is critical, but the font is MORE critical -->
+<link rel="preload" href="hero.jpg" as="image" fetchpriority="low">
+<link rel="preload" href="font.woff2" as="font" fetchpriority="high">
+```
+
+---
+
+### 6. SDE 2 Strategy: Implementation Patterns
+
+#### A. Smart Prefetching (Next.js Link)
+Many frameworks use a `MutationObserver` or `IntersectionObserver` to prefetch links only when they appear in the user's viewport.
+- **Why?** Prefetching *every* link on a page would kill the user's data plan. Prefetching only what's visible is the SDE 2 balance.
+
+#### B. Early Hints (HTTP 103)
+This is the "Server-side Preload." While the server is busy calculating the DB results for the HTML, it can send an "Early Hint" response containing the preload links.
+- **Impact:** The browser starts downloading the CSS/Fonts **before** it even receives the first byte of HTML.
+
+### Summary
+*   **Junior view:** Preload makes it fast now, Prefetch makes it fast later.
+*   **SDE 2 view:** Preload and Prefetch are tools to manipulate the **Browser Resource Scheduler**. We use **Preload** to eliminate **Discovery Delays** for critical current-page assets, and **Prefetch** to utilize **Browser Idle Time** to pre-populate the **HTTP Cache** for future transitions.

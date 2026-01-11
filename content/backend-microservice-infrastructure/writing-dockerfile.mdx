@@ -1,0 +1,105 @@
+---
+title: Writing a Dockerfile
+description: Learn how to write efficient Dockerfiles with best practices for building, optimizing, and deploying applications
+order: 81
+---
+
+To an SDE 2, writing a Dockerfile is not just about getting the app to run; it’s an exercise in **Build Pipeline Optimization** and **Security Engineering**. 
+
+A poorly written Dockerfile leads to bloated images (slow deploys) and broken cache (slow builds). An SDE 2 writes "Cache-Efficient, Multi-Stage, Non-Root" Dockerfiles.
+
+---
+
+### 1. The Mechanic: Layer Caching
+**The SDE 2 View:** Every instruction in a Dockerfile (`RUN`, `COPY`, `ADD`) creates a new **Read-Only Layer**. Docker uses a hash-based caching mechanism. If a layer’s input hasn't changed, Docker reuses the cached layer.
+
+**The Strategy:** Order instructions from **Least Frequent to Most Frequent change**.
+- **Bad:** `COPY . .` then `RUN npm install`. (Every code change triggers a full re-install).
+- **Good:** `COPY package.json` then `RUN npm install`, then `COPY . .`. (Dependencies are only re-installed if `package.json` changes).
+
+---
+
+### 2. Multi-Stage Builds: Size & Security
+**The SDE 2 View:** Your production image should only contain the **Binary/Artifacts** and the **Runtime**. It should *never* contain the source code, compilers, or SSH keys used during the build.
+
+**Mechanics:** Use one large image to build the app, then `COPY` only the result into a tiny, "distroless" or Alpine-based runtime image.
+
+---
+
+### 3. The "SDE 2" Dockerfile Template (Node.js)
+
+```dockerfile
+# --- Stage 1: Build Stage ---
+FROM node:20-alpine AS builder
+
+# Set working directory
+WORKDIR /app
+
+# 1. Optimize Cache: Copy only dependency manifests first
+COPY package*.json ./
+
+# 2. Use 'npm ci' for reproducible builds (clean install)
+RUN npm ci
+
+# 3. Now copy the source code (this layer changes often)
+COPY . .
+
+# 4. Build the production artifacts
+RUN npm run build
+
+# --- Stage 2: Production Stage ---
+FROM node:20-alpine
+
+# Set Environment to production
+ENV NODE_ENV=production
+
+WORKDIR /app
+
+# 5. Security: Don't run as 'root'
+# Alpine Node images come with a pre-created 'node' user
+USER node
+
+# 6. Copy only the build artifacts and production node_modules from the builder
+COPY --from=builder --chown=node:node /app/dist ./dist
+COPY --from=builder --chown=node:node /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/package.json ./package.json
+
+# 7. Use 'exec form' for ENTRYPOINT to ensure SIGTERM signals reach the process
+# This allows for graceful shutdowns in Kubernetes/Docker
+ENTRYPOINT ["node", "dist/index.js"]
+```
+
+---
+
+### 4. SDE 2 Deep Dive: Under-the-Hood Concepts
+
+#### A. The `.dockerignore` File
+**The Mechanic:** When you run `docker build`, the CLI sends the entire directory (the **Build Context**) to the Docker Daemon. 
+- **SDE 2 Insight:** If you have a 1GB `node_modules` folder, the "Sending build context" step will take forever. Always ignore `node_modules`, `.git`, and `dist`.
+
+#### B. Exec Form vs. Shell Form
+- **Shell Form:** `CMD node index.js` -> Runs as `/bin/sh -c "node index.js"`. The shell (sh) becomes PID 1 and **swallows signals**. You can't gracefully shut down.
+- **Exec Form (JSON):** `CMD ["node", "index.js"]` -> Runs the process directly as PID 1. It correctly receives `SIGTERM` from Docker/K8s.
+
+#### C. `npm ci` vs `npm install`
+- `npm install` can update your `package-lock.json`. You don't want your environment changing during a build.
+- `npm ci` (Clean Install) is strictly read-only and faster. It ensures the **Image is Immutable**.
+
+#### D. The "Attack Surface"
+By using `alpine` and a `non-root user`:
+1.  **Alpine:** Reduces the OS utilities (no `curl`, `git`, `python` by default), making it harder for a hacker to move laterally if they compromise the container.
+2.  **USER node:** Even if the attacker finds a vulnerability in your code, they are trapped in a low-privilege user account and cannot easily install malware or modify system files.
+
+---
+
+### 5. SDE 2 Summary Checklist
+1.  **Small Base:** Use `alpine` or `slim`.
+2.  **Layer Order:** Dependencies before Source.
+3.  **Multi-stage:** Separate Build vs. Run environments.
+4.  **Security:** `USER <non-root>`.
+5.  **Signal Handling:** Use `["JSON", "array"]` syntax for `CMD/ENTRYPOINT`.
+6.  **Immutable:** Use `npm ci` or `yarn --frozen-lockfile`.
+
+### Summary
+*   **Junior view:** It’s a script to setup the environment.
+*   **SDE 2 view:** It is a **Layered Union File System** configuration that must be architected for **Cache Maximization**, **Minimal Attack Surface**, and **Graceful Process Management**.

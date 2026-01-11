@@ -1,0 +1,113 @@
+---
+title: Cumulative Layout Shift (CLS)
+description: Understand CLS, why it matters for Core Web Vitals, and how to prevent unexpected layout shifts
+order: 62
+---
+
+To an SDE 2, **CLS (Cumulative Layout Shift)** is a metric that quantifies **Layout Instability**. It is a measure of how much "unexpected" movement occurs on a page during its lifecycle.
+
+From a browser internals perspective, CLS is caused by the **Layout (Reflow) engine** being forced to re-calculate the positions of already-rendered elements because a new element was injected or a resource (like an image) finally loaded with different dimensions than the placeholder.
+
+---
+
+### 1. The Under-the-Hood Math
+The browser calculates the CLS score for every "unstable" frame using two metrics:
+1.  **Impact Fraction:** How much of the viewport the moving element occupies between two frames.
+2.  **Distance Fraction:** How far the element moved relative to the viewport.
+
+**Score = Impact Fraction × Distance Fraction**
+
+**The "Session Window":** CLS isn't just one number; it’s a "windowed" metric. The browser tracks shifts in 5-second bursts (windows). The highest score from any of these windows is your final CLS. This prevents a 10-minute session from having a "massive" cumulative score just by virtue of the user being on the page a long time.
+
+---
+
+### 2. Common Root Causes (The SDE 2 View)
+
+#### A. Images/Videos without Dimensions
+If you don't provide `width` and `height`, the browser sets the initial size to `0x0`. When the image bytes arrive, the browser suddenly realizes it’s `400x300`, performs a **Reflow**, and pushes all subsequent content (text, buttons) down.
+
+#### B. FOIT/FOUT (Font Loading)
+When a custom web font loads:
+- **FOIT (Flash of Invisible Text):** The browser waits for the font; the text is invisible, then "pops" in.
+- **FOUT (Flash of Unstyled Text):** The browser uses a system font first, then swaps to the custom font. If the custom font has different kerning/line-height, the paragraphs shift.
+
+#### C. Injected Content (Ads/Banners)
+Standard "Marketing Banners" that appear at the top of the page after the API call finishes.
+
+---
+
+### 3. SDE 2 Strategy: Preventing the Shift
+
+#### 1. Reserving Space (Aspect Ratio Boxes)
+Instead of letting the browser guess, we reserve the space in the **CSSOM (CSS Object Model)** before the resource even starts downloading.
+
+```css
+/* ✅ SDE 2 Solution: Reserve the box */
+.image-wrapper {
+  width: 100%;
+  aspect-ratio: 16 / 9; /* Browser knows the height before image loads */
+  background-color: #f0f0f0; /* Visual placeholder */
+}
+
+img {
+  width: 100%;
+  height: auto;
+}
+```
+
+#### 2. Animation: `transform` vs. `top/left`
+This is a critical SDE 2 distinction.
+- **Changing `top`:** Triggers a **Reflow** (Geometry) and a **Repaint**. It affects the layout of neighbors, causing CLS.
+- **Changing `transform: translateY()`:** Triggers only a **Composite** (GPU) phase. The element is moved on its own "layer" without affecting the geometry of neighbors. **Result: 0 CLS.**
+
+#### 3. Font Optimization: `size-adjust`
+Modern CSS allows us to "match" our fallback font's dimensions to our custom font to prevent shifts during the swap.
+
+```css
+@font-face {
+  font-family: 'MyCustomFont';
+  src: url('...');
+}
+
+/* Adjust the fallback font to 'take up' the same space as the custom one */
+@font-face {
+  font-family: 'MyFallback';
+  src: local('Arial');
+  size-adjust: 95%; /* Shrink Arial to match MyCustomFont's height */
+}
+```
+
+---
+
+### 4. SDE 2 Code: Measuring CLS in the Field
+You use the `PerformanceObserver` to capture `layout-shift` entries.
+
+```javascript
+let clsScore = 0;
+
+new PerformanceObserver((entryList) => {
+  for (const entry of entryList.getEntries()) {
+    // Only count shifts that didn't happen within 500ms of user input
+    // (User-initiated shifts like opening an accordion shouldn't hurt CLS)
+    if (!entry.hadRecentInput) {
+      clsScore += entry.value;
+      console.log('Current CLS:', clsScore);
+      console.log('Shifted Items:', entry.sources);
+    }
+  }
+}).observe({ type: 'layout-shift', buffered: true });
+```
+
+---
+
+### 5. SDE 2 Decision Matrix: Handling Ads/Banners
+
+| Scenario | Strategy | Result |
+| :--- | :--- | :--- |
+| **Top Banner Ad** | Pre-allocate the **maximum** possible height in CSS. | Content never shifts; empty space is better than jumping text. |
+| **Infinite Scroll List** | Use a "Skeleton Screen" with fixed height placeholders. | Smooth scroll; no "jumps" as items load. |
+| **Dynamic "Success" Message** | Use `position: absolute` or an overlay. | Message appears without pushing the rest of the UI. |
+
+### Summary
+*   **Junior view:** It's just a jumpy page; I'll fix it with a loading spinner.
+*   **SDE 2 view:** CLS is a **Layout Engine synchronization** problem. We solve it by ensuring that the **Geometry of the Render Tree** remains stable. We achieve this by **Reserving Space** for asynchronous resources, using **Compositor-only animations**, and matching **Font Metrics** to ensure the "Swap" doesn't invalidate the layout.

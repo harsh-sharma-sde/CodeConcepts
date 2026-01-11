@@ -1,0 +1,130 @@
+---
+title: TypeScript Type Guards
+description: Learn how to use Type Guards in TypeScript to safely narrow types and avoid runtime errors
+order: 11
+---
+
+To an SDE 2, **Type Guards** are the mechanism that drives **Control Flow Analysis (CFA)**. They are the bridge between the **Value Space** (the actual data running in JavaScript) and the **Type Space** (the static analysis performed by TypeScript).
+
+When you use a Type Guard, you aren't just checking a condition; you are instructing the TypeScript compiler to "narrow" the possible types of a variable for a specific scope.
+
+---
+
+### 1. Built-in Type Guards
+TypeScript understands standard JavaScript operators that narrow types at runtime.
+
+*   **`typeof`**: Used for primitives (`string`, `number`, `boolean`, `symbol`).
+*   **`instanceof`**: Used for classes and constructor functions (checks the prototype chain).
+*   **`in`**: Checks if a property exists on an object.
+
+**Mechanics:** When the compiler sees these operators inside an `if` or `switch`, it internally updates the "effective type" of the variable within that block.
+
+```typescript
+function process(input: string | number | Date) {
+    if (typeof input === "string") {
+        // Inside this block, 'input' is narrowed to 'string'
+        return input.toUpperCase();
+    }
+    
+    if (input instanceof Date) {
+        // Narrowed to 'Date'
+        return input.getTime();
+    }
+}
+```
+
+---
+
+### 2. User-Defined Type Guards (`is` keyword)
+**The SDE 2 View:** Built-in guards don't work for interfaces (because interfaces don't exist at runtime). For complex domain logic, you need a **Type Predicate**.
+
+**Mechanics:** A function that returns `arg is Type` tells the compiler: "If this function returns `true`, you can safely treat `arg` as `Type` in the calling scope."
+
+```typescript
+interface Admin { role: string; access: string[] }
+interface User { role: string }
+
+// The Type Predicate: 'user is Admin'
+function isAdmin(user: User | Admin): user is Admin {
+    return (user as Admin).access !== undefined;
+}
+
+function authorize(person: User | Admin) {
+    if (isAdmin(person)) {
+        // person is narrowed to Admin here
+        console.log(person.access); 
+    }
+}
+```
+
+---
+
+### 3. Assertion Guards (`asserts` keyword)
+**The SDE 2 View:** Sometimes you don't want a boolean check; you want to throw an error if a type is wrong (like an invariant check).
+
+**Mechanics:** The `asserts` keyword tells the compiler that if the function returns (doesn't throw), the variable is guaranteed to be of that type for the **remainder of the current scope**.
+
+```typescript
+function assertIsString(val: any): asserts val is string {
+    if (typeof val !== "string") {
+        throw new Error("Not a string!");
+    }
+}
+
+function yell(val: any) {
+    assertIsString(val);
+    // From here on, 'val' is treated as 'string'. 
+    // No 'if' block needed.
+    console.log(val.toUpperCase());
+}
+```
+
+---
+
+### 4. Under the Hood: Control Flow Analysis (CFA)
+As an SDE 2, you should understand how the compiler handles the "else" branch or early returns. This is called **Negative Narrowing**.
+
+**Mechanics:**
+If you guard a type and return early, the compiler "subtracts" that type from the union for the rest of the function.
+
+```typescript
+function example(x: string | number | boolean) {
+    if (typeof x === "string") return;
+
+    // x is now 'number | boolean'
+    
+    if (typeof x === "number") return;
+
+    // x is now 'boolean' (The only possibility left)
+}
+```
+
+---
+
+### 5. SDE 2 Architectural Insight: Discriminated Unions vs. Type Guards
+When designing a system, SDE 2s prefer **Discriminated Unions** over custom Type Guards because:
+1.  **Exhaustiveness:** You can use the `never` type to ensure every case is handled.
+2.  **Readability:** The logic is embedded in the data structure, not a separate utility function.
+3.  **Performance:** Checking a literal property (`if (obj.type === 'A')`) is faster at runtime than calling a function (`if (isTypeA(obj))`).
+
+---
+
+### 6. Common Pitfall: Truthiness Narrowing
+SDE 2s know that simple truthiness checks can be dangerous.
+
+```typescript
+function printLen(str?: string) {
+    if (str) {
+        // Narrowed to 'string'
+        console.log(str.length);
+    } else {
+        // Danger: str could be undefined OR an empty string ""
+        // Both are falsy!
+    }
+}
+```
+**The Lesson:** Always be explicit. Use `if (str !== undefined)` if you specifically want to narrow out the nullish values but keep the empty strings.
+
+### Summary
+*   **Junior view:** It’s an `if` statement for types.
+*   **SDE 2 view:** It’s an instruction to the **Control Flow Analysis** engine to narrow the variable's type within a specific branch, either by using built-in JS operators or by defining **Type Predicates** (`is`) and **Assertion Signatures** (`asserts`) to bridge Value-Space logic into Type-Space safety.

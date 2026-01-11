@@ -1,0 +1,101 @@
+---
+title: Authentication (JWT / OAuth / Cookies)
+description: Learn how to implement authentication in web applications using JWT, OAuth, and cookies
+order: 55
+---
+
+To an SDE 2, **Authentication** is a challenge of **Security vs. State Management**. Your goal is to prove the user's identity to the server while protecting the sensitive "proof" (the token) from two main browser-based attacks: **XSS (Cross-Site Scripting)** and **CSRF (Cross-Site Request Forgery)**.
+
+---
+
+### 1. Stateless vs. Stateful Auth
+*   **Stateful (Sessions):** The server stores a session in a database/Redis. The browser gets a `session_id`. The server must look up this ID on every request.
+*   **Stateless (JWT):** The server stores nothing. The token itself contains the user data, signed by a secret key. The server only needs to verify the signature.
+
+---
+
+### 2. JWT (JSON Web Token) Structure
+**The SDE 2 View:** A JWT is **Encoded**, not **Encrypted**. Anyone can see the data; they just can't change it without breaking the signature.
+
+**Mechanics:**
+1.  **Header:** Algorithm & Token type.
+2.  **Payload:** The "Claims" (User ID, Name, Expiration).
+3.  **Signature:** `HMACSHA256(base64(Header) + "." + base64(Payload), SecretKey)`.
+
+**SDE 2 Warning:** Never store passwords or PII (Personally Identifiable Information) in the payload, as it’s easily decoded by a 3rd party script.
+
+---
+
+### 3. The Storage Dilemma: Where to put the token?
+
+#### Option A: `localStorage`
+*   **Pros:** Easy to use, survives page refresh.
+*   **Cons:** **Vulnerable to XSS.** If a hacker injects a `<script>` (via a dependency or an input field), they can run `localStorage.getItem('token')` and steal it.
+
+#### Option B: `HttpOnly` Cookie (SDE 2 Recommended)
+*   **Pros:** **XSS-Safe.** JavaScript cannot read the cookie. The browser automatically attaches it to every request to that domain.
+*   **Cons:** **Vulnerable to CSRF.** If a user clicks a malicious link on another site, that site can trigger a request to your API, and the browser will "helpfully" attach the cookie.
+*   **The Fix:** Use the `SameSite=Strict` or `SameSite=Lax` attribute on the cookie.
+
+---
+
+### 4. SDE 2 Deep Dive: The Silent Refresh Pattern
+A good security posture uses **Short-lived Access Tokens** (e.g., 15 mins) and **Long-lived Refresh Tokens** (e.g., 7 days).
+
+**The Workflow:**
+1.  User logs in. Server sends an **Access Token** (in JS memory or a standard cookie) and a **Refresh Token** (in an `HttpOnly`, `Secure`, `Path=/refresh` cookie).
+2.  The Access Token expires.
+3.  The Frontend **Interceptor** catches the `401 Unauthorized` error.
+4.  The Frontend makes a hidden call to `/refresh`. Since the cookie is `HttpOnly`, JS can't see it, but the browser sends it.
+5.  Server verifies the Refresh Token and sends a brand new Access Token.
+6.  The user never sees a login screen.
+
+**Code Example: Axios Interceptor**
+```javascript
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    // If the error is 401 and we haven't tried to refresh yet
+    if (error.response.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+      try {
+        // Calls the endpoint that reads the HttpOnly Refresh Cookie
+        const { data } = await axios.post('/auth/refresh-token');
+        const { newAccessToken } = data;
+        
+        // Update the header and retry the original call
+        api.defaults.headers.common['Authorization'] = `Bearer ${newAccessToken}`;
+        return api(originalRequest);
+      } catch (refreshError) {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+```
+
+---
+
+### 5. OAuth 2.0 and OIDC (OpenID Connect)
+**The SDE 2 View:** You don't "log in" with OAuth; you "authorize" an application to act on your behalf. OIDC is a layer on top of OAuth that adds the `ID Token` (a JWT) to provide user profile data.
+
+**The "PKCE" (Proof Key for Code Exchange) Flow:**
+Since SPAs (Single Page Apps) cannot keep a "Client Secret" safe (it would be in the JS bundle), we use **PKCE**:
+1.  **Code Challenge:** Frontend generates a random string, hashes it, and sends the hash to the Auth Provider.
+2.  **Code Verifier:** After the user logs in, the Auth Provider sends a "code" back.
+3.  **Exchange:** The Frontend sends the "code" PLUS the original unhashed string.
+4.  **Verification:** The Provider hashes the string; if it matches the original challenge, it proves the request came from the same app.
+
+---
+
+### 6. SDE 2 Checklist: Security Headers
+When building an auth system, ensure your server sends these headers:
+*   **`Content-Security-Policy (CSP)`**: Limits where scripts can be loaded from.
+*   **`Strict-Transport-Security (HSTS)`**: Forces the browser to use HTTPS only.
+*   **`X-Frame-Options: DENY`**: Prevents **Clickjacking** (loading your site in an iframe on a malicious site).
+
+### Summary
+*   **Junior view:** Send a username/password, get a token, put it in `localStorage`.
+*   **SDE 2 view:** Use **Stateless JWTs** with **HttpOnly Cookies** to mitigate **XSS**, implement **SameSite** to prevent **CSRF**, and use an **Interceptor** for **Silent Token Refresh** to balance security with a seamless User Experience.

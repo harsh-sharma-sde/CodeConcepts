@@ -1,0 +1,114 @@
+---
+title: Event Emitter
+description: Understand the Event Emitter pattern, how it works in JavaScript and Node.js, and when to use it
+order: 76
+---
+
+To an SDE 2, the **EventEmitter** is a fundamental implementation of the **Observer Pattern**. In Node.js, it is the backbone of the entire ecosystem—`fs`, `http`, and `streams` all inherit from it.
+
+It allows for **Decoupled Communication**: one part of the system can signal that something happened without needing to know who is listening.
+
+---
+
+### 1. The Under-the-Hood Mechanic: The Internal Map
+**The SDE 2 View:** Internally, an EventEmitter is essentially a plain JavaScript object (a hash map) where the **Keys** are the event names and the **Values** are either a function or an array of functions (the listeners).
+
+**Mechanics:**
+- When you call `.on(event, cb)`, you are pushing a function into an array inside that internal object.
+- When you call `.emit(event)`, the emitter performs an $O(1)$ lookup in its map and iterates through the array of functions, calling them one by one.
+
+---
+
+### 2. Execution Model: Synchronous by Default
+**The SDE 2 View:** A common misconception is that EventEmitters are asynchronous. They are **Synchronous**.
+
+**Mechanics:**
+When `.emit()` is called, the EventEmitter executes all registered listeners on the **current stack frame** before returning control to the next line of code. If a listener has a heavy computation, it will block the event loop.
+
+```javascript
+const EventEmitter = require('events');
+const myEmitter = new EventEmitter();
+
+myEmitter.on('start', () => {
+  console.log('2. Listener triggered');
+});
+
+console.log('1. Before emit');
+myEmitter.emit('start'); // Synchronous call!
+console.log('3. After emit');
+
+// Output: 1, 2, 3
+```
+
+---
+
+### 3. SDE 2 Deep Dive: Memory Leaks & `maxListeners`
+As an SDE 2, you must watch out for the "Cumulative Listener" leak. This happens when you add listeners inside a repeating logic (like a request handler) but never remove them.
+
+**The Guardrail:**
+Node.js sets a default limit of **10 listeners** per event. If you exceed this, you’ll see a `MaxListenersExceededWarning`.
+- **The Reason:** This is a built-in "leak detector." Usually, having 50 listeners on one event is a sign that you are accidentally adding a new listener on every incoming HTTP request.
+
+**The Fix:** 
+Use `.once()` for one-time events, or ensure you call `.removeListener()` or `.off()` in your cleanup logic.
+
+---
+
+### 4. The Special `error` Event
+**The SDE 2 View:** In Node.js, the event named `'error'` is a "First-Class Citizen."
+
+**Mechanics:**
+If an EventEmitter emits the `'error'` event and there are **no listeners** registered for it, Node.js will throw the error, print the stack trace, and **exit the process**. 
+- **SDE 2 Rule:** Always attach a listener to the `'error'` event of any emitter you create to prevent unhandled crashes.
+
+```javascript
+myEmitter.on('error', (err) => {
+  console.error('Caught the error safely:', err.message);
+});
+
+myEmitter.emit('error', new Error('Something went wrong'));
+```
+
+---
+
+### 5. Custom EventEmitter Implementation (Simple)
+Understanding the internal structure is key for an SDE 2.
+
+```javascript
+class SimpleEmitter {
+  constructor() {
+    this._events = {}; // The internal Hash Map
+  }
+
+  on(event, listener) {
+    if (!this._events[event]) this._events[event] = [];
+    this._events[event].push(listener);
+  }
+
+  emit(event, ...args) {
+    if (!this._events[event]) return;
+    // Iterate and execute synchronously
+    this._events[event].forEach(fn => fn(...args));
+  }
+
+  off(event, listener) {
+    if (!this._events[event]) return;
+    this._events[event] = this._events[event].filter(fn => fn !== listener);
+  }
+}
+```
+
+---
+
+### 6. SDE 2 Comparison: EventEmitter vs. Promises
+
+| Feature | EventEmitter | Promises |
+| :--- | :--- | :--- |
+| **Data Flow** | Can emit multiple values over time. | Resolves/Rejects exactly once. |
+| **Logic** | Observer Pattern (Many-to-Many). | Flow Control (One-to-One). |
+| **Lifecycle** | Stays alive until manually closed. | Finished once settled. |
+| **Best Use Case** | WebSockets, File streams, UI clicks. | API requests, single file reads. |
+
+### Summary
+*   **Junior view:** It’s how I handle events like clicks or data arrival.
+*   **SDE 2 view:** It is a **Synchronous Dispatcher** based on a **Hash Map of Function Arrays**. It requires strict **Memory Management** (removing listeners) and careful handling of the **`error` event** to ensure system stability.

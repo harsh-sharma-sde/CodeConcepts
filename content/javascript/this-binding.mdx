@@ -1,0 +1,110 @@
+---
+title: JavaScript `this` Binding
+description: Deep dive into how `this` works in JavaScript, including rules, arrow functions, and common pitfalls
+order: 5
+---
+
+For an SDE 2, the `this` keyword is best understood as a **pointer** that is determined by the **Call-Site** (how the function was invoked), not where the function was written. 
+
+Internally, `this` is a property of the **Execution Context**. When a function is called, the engine creates a new execution context and sets the `[[ThisValue]]` internal slot based on specific rules.
+
+---
+
+### 1. The Four Rules of "this"
+The engine follows a priority-based checklist to determine what `this` points to:
+
+#### Rule 1: New Binding (Highest Priority)
+When a function is called with the `new` keyword, the engine:
+1.  Creates a brand new empty object in the heap.
+2.  Links this object's `[[Prototype]]` to the function's `.prototype`.
+3.  **Sets `this` to this new object for that function call.**
+
+```javascript
+function User(name) {
+    this.name = name; 
+}
+const bob = new User("Bob"); // 'this' inside User is the 'bob' object.
+```
+
+#### Rule 2: Explicit Binding (`call`, `apply`, `bind`)
+You manually tell the engine what `this` should be. 
+*   **SDE 2 Insight on `.bind()`**: Unlike `call/apply`, `.bind()` returns a new **Exotic Bound Function Object**. It "hard-wires" the `this` context into the function’s internal state so it cannot be changed later, even with `.call()`.
+
+```javascript
+function greet() { console.log(this.name); }
+const user = { name: "Alice" };
+
+greet.call(user); // Alice
+const boundGreet = greet.bind(user); // 'this' is now permanently 'user'
+```
+
+#### Rule 3: Implicit Binding (The Context Object)
+When a function is called as a method of an object, that object becomes `this`.
+
+```javascript
+const obj = {
+    id: 42,
+    getId: function() { return this.id; }
+};
+obj.getId(); // 42 (obj is the call-site context)
+```
+**The "Lost Binding" Trap:**
+If you assign the method to a variable, you lose the context because the call-site changes.
+```javascript
+const detachedGetId = obj.getId; 
+detachedGetId(); // undefined (or Error in strict mode). Call-site is now Global.
+```
+
+#### Rule 4: Default Binding (Lowest Priority)
+If none of the above apply (e.g., a standalone function call), `this` defaults to:
+- **Non-strict mode:** The Global Object (`window` in browser, `global` in Node).
+- **Strict mode (`'use strict'`):** `undefined`.
+
+---
+
+### 2. The Exception: Arrow Functions (Lexical `this`)
+Arrow functions do **not** have their own `[[ThisValue]]` internal slot. 
+
+**Mechanics:** When V8 encounters `this` inside an arrow function, it treats it like any other variable lookup. It looks at the **Lexical Environment** (the parent scope) to find what `this` was in the outer execution context.
+
+```javascript
+const timer = {
+    seconds: 0,
+    start: function() {
+        // Arrow function doesn't have its own 'this', 
+        // so it uses 'this' from start(), which is 'timer'.
+        setInterval(() => {
+            this.seconds++; 
+            console.log(this.seconds);
+        }, 1000);
+    }
+};
+timer.start();
+```
+
+---
+
+### 3. SDE 2 Deep Dive: How the Engine handles Method Calls
+As an SDE 2, you should know how V8 optimizes this. 
+
+When you do `obj.method()`, the engine performs a **Reference Lookup**. This lookup returns a "Reference Type" (internal type) which consists of:
+1. The base object (`obj`).
+2. The property name (`method`).
+3. The strict mode flag.
+
+When the parentheses `()` are applied to this Reference Type, the engine takes the "base object" and passes it as the `this` argument to the function's execution context. If you do `const fn = obj.method`, you are "getting" the value, which returns the raw function pointer, **discarding** the Reference Type information (and thus the context).
+
+---
+
+### 4. Summary Table of Priority
+
+| Method | Syntax | `this` points to... |
+| :--- | :--- | :--- |
+| **`new`** | `new Foo()` | The newly created instance |
+| **Explicit** | `fn.call(obj)` | The object passed to `call/apply/bind` |
+| **Implicit** | `obj.fn()` | The object before the dot |
+| **Default** | `fn()` | Global object / `undefined` |
+| **Arrow** | `() => {}` | The `this` of the surrounding scope (Lexical) |
+
+### Performance Tip for SDE 2s
+Avoid using `.bind()` inside a React `render` method or inside high-frequency loops. Since `.bind()` creates a **new function object** every time it's called, it creates unnecessary pressure on the **Garbage Collector**. Use arrow functions in class properties or memoized callbacks instead.
